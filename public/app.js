@@ -63,10 +63,20 @@ async function api(path, method = 'GET', data) {
   return result;
 }
 const base = () => '/api/customers/' + state.customer;
+let loadSequence = 0;
 async function load(customer = state.customer) {
+  const sequence = ++loadSequence;
   const query = new URLSearchParams({ days: String(state.days), ...(customer ? { customer } : {}) });
-  state.data = await api('/api/bootstrap?' + query); state.customer = state.data.tenant?.id || null;
-  render();
+  app.inert = true;
+  app.setAttribute('aria-busy', 'true');
+  try {
+    const data = await api('/api/bootstrap?' + query);
+    if (sequence !== loadSequence) return;
+    state.data = data; state.customer = data.tenant?.id || null;
+    render();
+  } finally {
+    if (sequence === loadSequence) { app.inert = false; app.removeAttribute('aria-busy'); }
+  }
 }
 async function initialize() {
   try {
@@ -559,3 +569,4 @@ function parseCSV(text) {
   return rows;
 }
 await initialize();
+
