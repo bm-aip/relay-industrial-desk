@@ -1,0 +1,13 @@
+{
+  "name": "relay-industrial-desk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A configurable industrial Sales Desk and customer impact prototype.",
+  "engines": { "node": ">=24 <25" },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check server.mjs && node --check src/domain.mjs && node --check src/seed.mjs && node --check public/app.js"
+  }
+}
