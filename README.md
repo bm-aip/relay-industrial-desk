@@ -21,11 +21,13 @@ npm test
 
 ## Deploy on Railway
 
-1. Create a Railway project from this GitHub repository. Railway uses the included Dockerfile and `railway.json` health check.
+1. Create a Railway project from this GitHub repository. Railway detects the included Dockerfile. In service Settings, set Healthcheck Path to `/health`, Healthcheck Timeout to `120`, and On Failure restart retries to `3`.
 2. Add a persistent volume to the application service mounted at `/app/data`. Keep **one replica**; this prototype uses a local SQLite database, not a distributed database.
-3. In service Variables, set `TEAM_PASSWORD` to a unique password of at least 16 characters. Enter it directly in Railway; never commit it. `NODE_ENV=production`, `HOST=0.0.0.0` and `DATA_DIR=/app/data` are set by the Dockerfile. Set `SEED_DEMO=true` to load sample customers on an empty database, or `false` to start empty.
-4. Deploy and generate an HTTPS Railway domain. Use Railway's assigned `PORT` (do not hard-code a public port).
+3. In service Variables, set `TEAM_PASSWORD` to a unique password of at least 16 characters. Enter it directly in Railway; never commit it. Set `PORT=3000`. `NODE_ENV=production`, `HOST=0.0.0.0` and `DATA_DIR=/app/data` are set by the Dockerfile. Set `SEED_DEMO=true` to load sample customers on an empty database, or `false` to start empty.
+4. Deploy and generate an HTTPS Railway domain with target port `3000`, matching the service's `PORT` variable.
 5. Check `/health` returns `status: ok`, then sign in with the team password. Add an enquiry, draft and review a quote, record a simulated send, and check Activity history.
+
+New Railway services cannot opt into the deprecated `railway.json` configuration, so this prototype uses dashboard settings. See [Railway configuration documentation](https://docs.railway.com/config-as-code), [health checks](https://docs.railway.com/deployments/healthchecks) and [persistent volumes](https://docs.railway.com/volumes).
 
 The production server refuses to start without a password of at least 16 characters. Records persist only if the volume is mounted correctly. Sessions are held in memory and end on service restart. Back up the volume before destructive changes; do not delete it to reset a demo. Database seeding only happens when the customer table is empty; changing `SEED_DEMO` does not erase existing data.
 
@@ -65,3 +67,4 @@ Authenticated endpoints use `/api/customers/:customerId/...` for enquiries, prod
 This is an internal team prototype with a shared password, not customer-level authentication. All team members can access all customer workspaces. It has no per-user roles, SSO, billing, background job worker, live integration, OCR/attachment processing, voice transcription, AI extraction or production monitoring. Quote sent/won transitions lock editing; catalogue changes do not silently reprice existing drafts. Basic source-message deduplication applies to direct enquiry intake; the simulated mapped-payload ingest endpoint has no provider retry contract.
 
 Use a proper identity provider, per-customer access controls, managed database, encrypted provider credentials, durable job queue, inbound verification, observability and backup policy before processing real business data at scale. These are extension milestones, not claims of completed features.
+
