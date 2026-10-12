@@ -1,5 +1,6 @@
 const app = document.querySelector('#app');
 const modal = document.querySelector('#modal');
+const brand = '<div class="brand"><span class="brand-symbol" aria-hidden="true">Q</span><span>Q-mate<small>Quote Automate</small></span></div>';
 const state = { customer: null, page: 'impact', days: 30, queue: 'active', channel: '', query: '', data: null, csrf: '', navOpen: false };
 const icons = {
   impact: '<path d="M3 17l6-6 4 3 7-9"/><path d="M15 5h5v5"/>',
@@ -86,9 +87,9 @@ async function initialize() {
   } catch (error) { app.innerHTML = empty('Unable to open the workspace', error.message, button('Try again', 'reload', 'arrow')); }
 }
 function renderLogin(demoLogin) {
-  app.innerHTML = '<main class="login" id="main"><section class="login-story"><div class="brand"><span class="brand-symbol">r</span><span>relay<small>industrial desk</small></span></div>' +
+  app.innerHTML = '<main class="login" id="main"><section class="login-story">' + brand +
     '<div><div class="eyebrow">YOUR TEAM’S OPERATING DESK</div><h1>From incoming enquiry.<br>To approved quote.</h1><p>One place to review work, configure customer workflows and see the effort your system saves.</p></div>' +
-    '<div class="eyebrow">BUILT AROUND THE WAY YOUR CUSTOMERS WORK</div></section><section class="login-form"><div><div class="eyebrow">TEAM ACCESS</div><h2>Welcome to your desk.</h2>' +
+    '<div class="eyebrow">BUILT AROUND THE WAY YOUR CUSTOMERS WORK</div></section><section class="login-form"><div><div class="eyebrow">TEAM ACCESS</div><h2>Welcome to Q-mate.</h2>' +
     '<p>Sign in to manage your customer workspaces. This prototype uses sample data and simulated delivery.</p><form data-form="login">' +
     field('Team password', input('password', '', 'password', 'required autocomplete="current-password"')) +
     '<p class="error-message" id="login-error" role="alert"></p><button class="button" type="submit">Open workspace ' + ico('arrow', 15) + '</button></form>' +
@@ -100,7 +101,7 @@ const pages = [['impact', 'Customer impact'], ['queue', 'Work queue'], ['catalog
 function render() {
   const t = tenant(), m = state.data.metrics;
   app.innerHTML = '<div class="shell' + (state.navOpen ? ' nav-open' : '') + '"><aside class="sidebar" aria-label="Workspace navigation">' +
-    '<div class="brand"><span class="brand-symbol">r</span><span>relay<small>industrial desk</small></span></div><div class="nav-label">YOUR WORKSPACE</div><nav>' +
+    brand + '<div class="nav-label">YOUR WORKSPACE</div><nav>' +
     pages.slice(0, 2).map(([key, label]) => nav(key, label, key === 'queue' ? (m?.pendingApprovals || 0) + (m?.needsReview || 0) : null)).join('') +
     '<div class="nav-label" style="margin-top:24px">CONFIGURE & MANAGE</div>' + pages.slice(2).map(([key, label]) => nav(key, label)).join('') +
     '</nav><div class="sidebar-bottom"><div class="workspace-card"><div class="eyebrow">CUSTOMER PORTFOLIO</div><p><strong>' + state.data.customers.length + ' workspaces</strong><br>Separate catalogues.<br>Customer-specific rules.</p></div>' +
@@ -569,4 +570,3 @@ function parseCSV(text) {
   return rows;
 }
 await initialize();
-

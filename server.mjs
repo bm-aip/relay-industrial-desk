@@ -94,7 +94,7 @@ const server = createServer(async (req, res) => {
   res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'");
   try {
     const url = new URL(req.url, 'http://localhost'), path = url.pathname;
-    if (req.method === 'GET' && path === '/health') return json(res, { status: 'ok', app: 'relay-desk', mode: 'prototype' });
+    if (req.method === 'GET' && path === '/health') return json(res, { status: 'ok', app: 'q-mate', mode: 'prototype' });
     if (req.method === 'GET' && publicFiles.has(path)) {
       const file = publicFiles.get(path), extension = file.slice(file.lastIndexOf('.'));
       res.writeHead(200, { 'Content-Type': MIME[extension], 'Cache-Control': 'no-cache' });
@@ -144,7 +144,7 @@ const server = createServer(async (req, res) => {
     }
     if (path === '/api/report.csv' && req.method === 'GET') {
       const tenant = store.get(requiredText(url.searchParams.get('customer'), 'Customer workspace'));
-      res.writeHead(200, { 'Content-Type': MIME['.csv'], 'Content-Disposition': 'attachment; filename="relay-impact-report.csv"', 'Cache-Control': 'no-store' });
+      res.writeHead(200, { 'Content-Type': MIME['.csv'], 'Content-Disposition': 'attachment; filename="q-mate-impact-report.csv"', 'Cache-Control': 'no-store' });
       return res.end(reportCSV(tenant, reporting(tenant, daysFrom(url))));
     }
     const input = req.method === 'GET' ? {} : await body(req);
@@ -301,6 +301,6 @@ const server = createServer(async (req, res) => {
 });
 server.requestTimeout = 30000;
 server.listen(Number(process.env.PORT || 3000), process.env.HOST || (production ? '0.0.0.0' : '127.0.0.1'), () => {
-  console.log('Relay Industrial Desk listening on port ' + server.address().port + ' (' + (production ? 'protected deployment' : 'local prototype') + ').');
+  console.log('Q-mate (Quote Automate) listening on port ' + server.address().port + ' (' + (production ? 'protected deployment' : 'local prototype') + ').');
 });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => server.close(() => { store.close(); process.exit(0); }));

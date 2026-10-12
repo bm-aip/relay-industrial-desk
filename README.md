@@ -1,6 +1,14 @@
-# Relay Industrial Desk
+# Q-mate — Quote Automate
 
-A functional prototype of a configurable sales desk for distributors with mixed industrial catalogues. Your operations team manages separate customer workspaces, catalogues, routing rules, channel mappings, quote review and impact reports. The shared workflow stays the same as customer configuration changes. No n8n is used.
+Q-mate is the pilot product name, abbreviated from **Quote Automate**. It is a functional prototype of a configurable sales desk for distributors with mixed industrial catalogues. Your operations team manages separate customer workspaces, catalogues, routing rules, channel mappings, quote review, follow-ups and impact reports. The shared workflow stays the same as customer configuration changes. No n8n is used.
+
+The pilot covers enquiries through approved quotes, follow-ups and linked orders. The name does not remove those broader workflow capabilities. External connectors and deliveries remain simulated as described below.
+
+## Pilot branding and compatibility
+
+Use **Q-mate** in customer-facing material and **Quote Automate** as the expanded name. The application wordmark, browser metadata, Q icon, package metadata, health response and downloaded `q-mate-impact-report.csv` use the pilot branding. The existing GitHub repository, Railway URL, session cookie and `relay.sqlite` filename remain infrastructure identifiers so rebranding does not move or reset data.
+
+Customer rollout material is available in [the onboarding guide](docs/Customer_Onboarding_and_Launch_Guide.md) and [the customer intake checklist](docs/Customer_Intake_and_Launch_Checklist.md).
 
 **Prototype scope:** all historical records are fictional, all external connections and deliveries are simulated, and extraction uses deterministic SKU/alias matching. There are no live WhatsApp, email, ERP, CRM or AI calls. Selecting a connector configures a capability contract and sample payload mapping; it does not connect that provider.
 
@@ -67,4 +75,3 @@ Authenticated endpoints use `/api/customers/:customerId/...` for enquiries, prod
 This is an internal team prototype with a shared password, not customer-level authentication. All team members can access all customer workspaces. It has no per-user roles, SSO, billing, background job worker, live integration, OCR/attachment processing, voice transcription, AI extraction or production monitoring. Quote sent/won transitions lock editing; catalogue changes do not silently reprice existing drafts. Basic source-message deduplication applies to direct enquiry intake; the simulated mapped-payload ingest endpoint has no provider retry contract.
 
 Use a proper identity provider, per-customer access controls, managed database, encrypted provider credentials, durable job queue, inbound verification, observability and backup policy before processing real business data at scale. These are extension milestones, not claims of completed features.
-

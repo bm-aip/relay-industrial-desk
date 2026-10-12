@@ -1,4 +1,4 @@
-name: Prototype checks
+name: Q-mate pilot checks
 on: [push, pull_request]
 jobs:
   check:

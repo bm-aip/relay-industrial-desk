@@ -1,9 +1,9 @@
 {
-  "name": "relay-industrial-desk",
+  "name": "q-mate-pilot",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A configurable industrial Sales Desk and customer impact prototype.",
+  "description": "Q-mate (Quote Automate): a configurable industrial sales pilot with quote approvals, follow-ups and customer impact reporting.",
   "engines": { "node": ">=24 <25" },
   "scripts": {
     "start": "node server.mjs",
