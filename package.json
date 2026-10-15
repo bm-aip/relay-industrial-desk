@@ -1,6 +1,6 @@
 {
   "name": "q-mate-pilot",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Q-mate (Quote Automate): a configurable industrial sales pilot with quote approvals, follow-ups and customer impact reporting.",
@@ -8,6 +8,7 @@
   "scripts": {
     "start": "node server.mjs",
     "test": "node --test test/*.test.mjs",
-    "check": "node --check server.mjs && node --check src/domain.mjs && node --check src/seed.mjs && node --check public/app.js"
+    "check": "node --check server.mjs && node --check src/domain.mjs && node --check src/workflow.mjs && node --check src/auth.mjs && node --check src/jobs.mjs && node --check src/store.mjs && node --check src/quotation.mjs && node --check src/seed.mjs && node --check public/app.js",
+    "backup": "node scripts/backup.mjs"
   }
 }

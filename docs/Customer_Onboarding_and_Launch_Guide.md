@@ -1,5 +1,7 @@
 # Q-mate customer onboarding and launch guide
 
+**Version 0.2 update — 15 October 2026:** Read [release notes and first-login instructions](Release_0.2_and_First_Login.md). Individual identities, workspace roles, quotation safeguards, durable simulation jobs and readiness screens now exist. Customer-specific provider integration and acceptance are still required before live operations.
+
 **Pilot product:** Q-mate — Quote Automate  
 **For:** your team operating the modular industrial distributor system  
 **Prepared:** 8 October 2026  
@@ -8,11 +10,11 @@
 
 ## 1. Understand the starting point
 
-Q-mate, abbreviated from Quote Automate, is the pilot product for this modular system. The application is a functional internal prototype. It has customer workspaces, mixed catalogues, routing rules, quote review, activity history and an impact dashboard. Its external channels, business-system connections and message deliveries are **simulated**. Product matching uses SKU/alias rules; it does not call an AI model.
+Q-mate, abbreviated from Quote Automate, is the pilot product for this modular system. The application is a pre-customer release with quotation safeguards and individual workspace access. It has customer workspaces, mixed catalogues, routing rules, quote review, activity history and an impact dashboard. Its external channels, business-system connections and message deliveries are **simulated**. Product matching uses SKU/alias rules; it does not call an AI model.
 
-Selecting WhatsApp, Tally or another connector currently configures sample payload mapping. It does not authorize an account or connect the provider. The shared team password also lets every signed-in team member access every customer workspace. A workspace is not a customer access boundary.
+Selecting WhatsApp, Tally or another connector currently configures sample payload mapping. It does not authorize an account or connect the provider. The shared password is now only a first-administrator setup key. Named users and server-enforced workspace roles control access; provision and verify customer-specific assignments.
 
-Use the prototype for demonstrations with fictional or sanitized examples. Before ingesting real customer business data, your engineer must implement appropriate identity, access, credential and data-handling controls. Before automated live operations, the chosen adapters and reliable processing also need to be built and tested.
+Use the prototype for demonstrations with fictional or sanitized examples. Before real customer data, configure and verify the implemented identity/workspace controls, authorized processing scope and appropriate data handling. Secure provider credentials still need implementation with a live adapter. Before automated live operations, the chosen adapters and reliable processing also need to be built and tested.
 
 There are two kinds of work:
 
@@ -149,7 +151,7 @@ For Zoho CRM, select module/operation scopes and the correct regional API domain
 
 Use an internal demonstration workspace with fictional or sanitized data. These steps do not enable live integrations.
 
-1. Open the deployed application and sign in using your team's stored password.
+1. Open the deployed application and create the first individual administrator using the existing team password as the setup key, then sign in with individual email/password.
 2. Go to **Customer workspaces → Add customer**. Enter distributor name and city. Uncheck **Start with the mixed sample catalogue and simulated Email / WhatsApp channels** to create a clean workspace. Leave it checked only when you want fictional sample products/connectors.
 3. In **Product catalogue**, add products or import CSV. Required headers are `sku,name,category,price,stock`. The supported additional fields are `unit,aliases,source`.
 
@@ -161,10 +163,10 @@ DEMO-SEN-01,Example proximity sensor,Automation,piece,900,15,example sensor,Fict
 
 Prices and stock above are invented. Aliases in CSV use `|`. Imports support 1–5,000 products per batch and files smaller than 1.5 MB. SKUs are matched case-insensitively; importing an existing SKU replaces its product fields. Keep a copy of the previous catalogue. Supply complete approved values rather than assuming omitted fields are preserved. Brand/specification, customer-specific pricing, tax classification and other production fields require schema and code extensions; extra CSV columns do not create those capabilities.
 
-4. In **Customer settings**, configure measured baseline effort, reference time to approval, loaded hourly cost, maximum discount, illustrative tax rate, follow-up calendar days and default owner. Currency/timezone are fixed to INR/Asia-Kolkata. Owner options are fictional sample team members; real staff provisioning needs development. Baselines are saved with new enquiries, so later changes do not rewrite existing baselines.
+4. In **Customer settings**, configure measured baseline effort, reference time to approval, loaded hourly cost, maximum discount, illustrative tax rate, follow-up calendar days and default owner. Currency/timezone are fixed to INR/Asia-Kolkata. Owner options come from active workspace users. Administrators provision staff in People & access. Baselines are saved with new enquiries, so later changes do not rewrite existing baselines.
 5. In **Routing rules**, add prioritized conditions and use **Preview routing**. The lowest priority number is evaluated first, and the first matching rule chooses a queue/owner. Current fields are channel, category, value and matching completeness. Each rule has one condition; compound rules, business-hour escalation and dynamic real-team assignment require development. Human quote approval remains required.
 6. In **Channels & systems**, configure a simulated connector's capabilities and sample JSON field mappings. Run the sample payload test. This validates normalization, not provider authentication, network connectivity or delivery.
-7. In **Work queue**, add a sample enquiry with a quantity and SKU per line or separated by semicolons. Resolve missing/ambiguous products, prepare a quote, review quantities, suitability, stock and commercial terms, record total human effort and approve it. Use **Simulate quote delivery** only as a demonstration. Revisions need fresh approval.
+7. In **Work queue**, add a sample enquiry with a quantity and SKU per line or separated by semicolons. Resolve missing/ambiguous products, prepare a quote, review quantities, suitability, stock and commercial terms, record additional human effort not already captured and approve it. Use **Simulate quote delivery** only as a demonstration. Revisions need fresh approval.
 8. Check **Activity history** and **Customer impact**, and export the report. A clean workspace has zero/unavailable impact until activity exists. Fictional or simulated results cannot establish customer ROI.
 
 The current hosting URL is [the Q-mate prototype](https://relay-industrial-desk-production.up.railway.app/). Its source is [the GitHub repository](https://github.com/bm-aip/relay-industrial-desk). The existing repository/domain names are infrastructure identifiers; Q-mate is the pilot brand. This guide verifies its configuration against local source; deployment verification is recorded separately.

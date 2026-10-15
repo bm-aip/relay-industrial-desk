@@ -1,5 +1,7 @@
 # Q-mate customer intake and launch checklist
 
+**Version 0.2 update — 15 October 2026:** Read [release notes and first-login instructions](Release_0.2_and_First_Login.md). Individual identities, workspace roles, quotation safeguards, durable simulation jobs and readiness screens now exist. Customer-specific provider integration and acceptance are still required before live operations.
+
 **Pilot product:** Q-mate — Quote Automate  
 **Branding updated:** 12 October 2026
 
@@ -97,7 +99,7 @@ The current demonstration CSV supports only `sku,name,category,unit,price,stock,
 | | Enquiry spanning several categories | | | |
 | | Default case | | | |
 
-The prototype supports ordered, single-condition rules and fictional team choices. Real team management, compound rules and timed escalation must be implemented if required.
+The application supports ordered, single-condition rules and actual workspace users. Individual users and assignment are implemented. Compound rules and timed escalation still require implementation if needed.
 
 - Follow-up delay, working hours and maximum attempts:
 - Approved message/template and approver:

@@ -1,7 +1,7 @@
 const app = document.querySelector('#app');
 const modal = document.querySelector('#modal');
 const brand = '<div class="brand"><span class="brand-symbol" aria-hidden="true">Q</span><span>Q-mate<small>Quote Automate</small></span></div>';
-const state = { customer: null, page: 'impact', days: 30, queue: 'active', channel: '', query: '', data: null, csrf: '', navOpen: false };
+const state = { customer: null, page: 'queue', days: 30, queue: 'active', channel: '', query: '', data: null, csrf: '', navOpen: false, importProducts: null };
 const icons = {
   impact: '<path d="M3 17l6-6 4 3 7-9"/><path d="M15 5h5v5"/>',
   queue: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
@@ -26,14 +26,21 @@ const icons = {
 };
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const ico = (name, size = 17) => '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (icons[name] || icons.queue) + '</svg>';
-const money = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n || 0);
+const money = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
 const num = (n, decimals = 0) => n === null || n === undefined ? '—' : Number(n).toLocaleString('en-IN', { maximumFractionDigits: decimals });
 const date = (stamp, withTime = false) => stamp ? new Date(stamp).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', ...(withTime ? { hour: '2-digit', minute: '2-digit' } : {}) }) : '—';
 const tenant = () => state.data?.tenant;
+const admin = () => state.data?.role === 'admin';
+const viewer = () => state.data?.role === 'viewer';
+const approver = () => ['admin', 'approver'].includes(state.data?.role);
+const accessiblePages = () => viewer() ? ['impact'] : admin() ? pages.map(([key]) => key) : ['queue', 'impact', 'catalogue', 'activity', 'operations'];
 function button(text, action, icon, secondary = false, extra = '') {
   return '<button type="button" class="button' + (secondary ? ' secondary' : '') + '" data-action="' + esc(action) + '" ' + extra + '>' + (icon ? ico(icon, 14) : '') + esc(text) + '</button>';
 }
-function field(label, content, hint = '') { return '<label>' + esc(label) + content + (hint ? '<small>' + esc(hint) + '</small>' : '') + '</label>'; }
+function field(label, content, hint = '') {
+  const control = content.replace(/<(input|select|textarea)\b/, '<$1 aria-label="' + esc(label) + '"');
+  return '<label>' + esc(label) + control + (hint ? '<small>' + esc(hint) + '</small>' : '') + '</label>';
+}
 function input(name, value = '', type = 'text', extra = '') { return '<input name="' + esc(name) + '" type="' + type + '" value="' + esc(value) + '" ' + extra + '>'; }
 function select(name, options, value = '', extra = '') {
   return '<select name="' + esc(name) + '" ' + extra + '>' + options.map((o) => {
@@ -45,7 +52,7 @@ function empty(title, detail, action = '') { return '<div class="empty"><h3>' + 
 function pill(text, color = '') { return '<span class="pill ' + color + '">' + esc(text) + '</span>'; }
 function statusPill(status) {
   const names = { new: ['Ready to draft', 'blue'], needs_review: ['Needs clarification', 'red'], awaiting_approval: ['Awaiting approval', 'amber'],
-    approved: ['Approved', ''], sent: ['Demo quote sent', 'gray'], won: ['Order linked', ''] };
+    approved: ['Approved', ''], sent: ['Simulated dispatch', 'gray'], won: ['Order linked', ''], lost: ['Declined', 'gray'] };
   return pill(...(names[status] || [status, 'gray']));
 }
 function toast(message) {
@@ -83,33 +90,37 @@ async function initialize() {
   try {
     const session = await api('/api/session');
     if (session.authenticated) { state.csrf = session.csrf; await load(); }
-    else renderLogin(session.demoLogin);
+    else renderLogin(session.demoLogin, session.setupRequired);
   } catch (error) { app.innerHTML = empty('Unable to open the workspace', error.message, button('Try again', 'reload', 'arrow')); }
 }
-function renderLogin(demoLogin) {
+function renderLogin(demoLogin, setupRequired = false) {
   app.innerHTML = '<main class="login" id="main"><section class="login-story">' + brand +
     '<div><div class="eyebrow">YOUR TEAM’S OPERATING DESK</div><h1>From incoming enquiry.<br>To approved quote.</h1><p>One place to review work, configure customer workflows and see the effort your system saves.</p></div>' +
     '<div class="eyebrow">BUILT AROUND THE WAY YOUR CUSTOMERS WORK</div></section><section class="login-form"><div><div class="eyebrow">TEAM ACCESS</div><h2>Welcome to Q-mate.</h2>' +
-    '<p>Sign in to manage your customer workspaces. This prototype uses sample data and simulated delivery.</p><form data-form="login">' +
-    field('Team password', input('password', '', 'password', 'required autocomplete="current-password"')) +
+    '<p>' + (setupRequired ? 'Create your individual administrator account. Enter the existing Railway team password as the setup key. Shared-password sign-in is retired after setup.' : 'Use your individual account. Workspace access follows your assigned role. External delivery remains simulated.') + '</p><form data-form="' + (setupRequired ? 'setup' : 'login') + '">' +
+    (setupRequired ? field('Setup key', input('bootstrapPassword', '', 'password', 'required autocomplete="off"')) + field('Your name', input('name', '', 'text', 'required autocomplete="name"')) : '') +
+    field('Email', input('email', '', 'email', 'required autocomplete="username"')) +
+    field(setupRequired ? 'New individual password (16+ characters)' : 'Password', input('password', '', 'password', 'required ' + (setupRequired ? 'minlength="16" autocomplete="new-password"' : 'autocomplete="current-password"'))) +
     '<p class="error-message" id="login-error" role="alert"></p><button class="button" type="submit">Open workspace ' + ico('arrow', 15) + '</button></form>' +
-    (demoLogin ? '<div class="login-demo"><p>Review the local prototype with two sample distributors and a mixed industrial catalogue.</p>' + button('Enter sample workspace', 'demo-login', 'arrow', true) + '</div>' : '') +
+    (demoLogin ? '<div class="login-demo"><p>Local fictional demonstration only. Demo account: demo@qmate.local.</p>' + button('Enter sample workspace', 'demo-login', 'arrow', true) + '</div>' : '') +
     '</div></section></main>';
 }
 const pages = [['impact', 'Customer impact'], ['queue', 'Work queue'], ['catalogue', 'Product catalogue'], ['connectors', 'Channels & systems'],
-  ['rules', 'Routing rules'], ['customers', 'Customer workspaces'], ['activity', 'Activity history'], ['settings', 'Customer settings']];
+  ['rules', 'Routing rules'], ['customers', 'Customer workspaces'], ['activity', 'Activity history'], ['settings', 'Customer settings'],
+  ['onboarding', 'Pilot setup'], ['operations', 'Delivery & health'], ['access', 'People & access']];
 function render() {
   const t = tenant(), m = state.data.metrics;
+  if (!accessiblePages().includes(state.page)) state.page = viewer() ? 'impact' : 'queue';
   app.innerHTML = '<div class="shell' + (state.navOpen ? ' nav-open' : '') + '"><aside class="sidebar" aria-label="Workspace navigation">' +
     brand + '<div class="nav-label">YOUR WORKSPACE</div><nav>' +
-    pages.slice(0, 2).map(([key, label]) => nav(key, label, key === 'queue' ? (m?.pendingApprovals || 0) + (m?.needsReview || 0) : null)).join('') +
-    '<div class="nav-label" style="margin-top:24px">CONFIGURE & MANAGE</div>' + pages.slice(2).map(([key, label]) => nav(key, label)).join('') +
+    pages.slice(0, 2).filter(([key]) => accessiblePages().includes(key)).map(([key, label]) => nav(key, label, key === 'queue' ? (m?.pendingApprovals || 0) + (m?.needsReview || 0) : null)).join('') +
+    (!viewer() ? '<div class="nav-label" style="margin-top:24px">OPERATE & MANAGE</div>' : '') + pages.slice(2).filter(([key]) => accessiblePages().includes(key)).map(([key, label]) => nav(key, label)).join('') +
     '</nav><div class="sidebar-bottom"><div class="workspace-card"><div class="eyebrow">CUSTOMER PORTFOLIO</div><p><strong>' + state.data.customers.length + ' workspaces</strong><br>Separate catalogues.<br>Customer-specific rules.</p></div>' +
-    '<div class="team-card"><span class="avatar">OT</span><div><b>Operations team</b><small>Internal team access</small></div></div></div></aside>' +
+    '<div class="team-card"><span class="avatar">' + esc(state.data.user.name.slice(0, 2).toUpperCase()) + '</span><div><b>' + esc(state.data.user.name) + '</b><small>' + esc(state.data.role) + ' access</small></div></div></div></aside>' +
     '<div class="main-wrap"><header class="topbar"><div class="workspace-switch"><button class="icon-button mobile-nav" data-action="mobile-nav" aria-label="Toggle navigation">' + ico('menu') + '</button>' +
     '<span class="icon-box">' + ico('customers', 16) + '</span>' +
     select('workspace', state.data.customers.map((c) => ({ value: c.id, label: c.name })), state.customer, 'class="workspace-select" aria-label="Customer workspace"') +
-    '</div><div class="top-actions"><time>' + date(new Date()) + '</time>' + pill('Sample data', 'amber') +
+    '</div><div class="top-actions"><time>' + date(new Date()) + '</time>' + pill(t?.mode === 'preparation' ? 'Pilot preparation' : 'Demo workspace', 'amber') +
     '<span class="avatar" title="Your operations team">OT</span><button class="icon-button" data-action="logout" aria-label="Sign out">' + ico('logout', 16) + '</button></div></header>' +
     '<main id="main" class="content" tabindex="-1">' + (t ? page() : noCustomers()) + '</main></div></div>';
 }
@@ -117,16 +128,20 @@ function nav(key, label, count) {
   return '<button class="nav-button' + (state.page === key ? ' active' : '') + '" data-page="' + key + '"' + (state.page === key ? ' aria-current="page"' : '') + '>' +
     ico(key) + '<span>' + label + '</span>' + (count ? '<span class="count">' + count + '</span>' : '') + '</button>';
 }
-function pageHead(title, description, actions = '', eyebrow = 'SALES DESK / ' + tenant().city) {
+function pageHead(title, description, actions = '', eyebrow = 'SALES DESK / ' + (tenant()?.city || 'PILOT PREPARATION')) {
   return '<div class="page-head"><div><div class="eyebrow">' + esc(eyebrow) + '</div><h1>' + esc(title) + '</h1><p>' + esc(description) + '</p></div><div class="toolbar">' + actions + '</div></div>';
 }
 function demoStrip() {
-  return '<div class="demo-strip">' + ico('info', 13) + '<span><b>Functional prototype.</b> Historical records are fictional. All channel delivery and system connections are simulated.</span><a href="#" data-action="method">How impact is measured ↗</a></div>';
+  return '<div class="demo-strip">' + ico('info', 13) + '<span><b>Pre-customer release.</b> ' + (tenant().mode === 'preparation' ? 'Preparing a customer workflow. ' : 'Demonstration records are fictional. ') + 'External delivery and provider connections remain simulated.</span><a href="#" data-action="method">Measurement notes ↗</a></div>';
 }
-function noCustomers() { return pageHead('Your customer portfolio', 'Start with a workspace, catalogue and an inbound channel.', button('Add customer', 'add-customer', 'plus')) + empty('No customer workspaces yet', 'Your team manages setup for each distributor.'); }
+function noCustomers() {
+  return pageHead('Your customer portfolio', 'Workspace access follows your individual account.', admin() ? button('Add customer', 'add-customer', 'plus') : '') +
+    empty(admin() ? 'No customer workspaces yet' : 'No workspaces assigned', admin() ? 'Create a clean workspace to prepare your first pilot.' : 'Ask your administrator to assign the appropriate workspace and role.');
+}
 function page() {
   return ({ impact: impactPage, queue: queuePage, catalogue: cataloguePage, connectors: connectorsPage,
-    rules: rulesPage, customers: customersPage, activity: activityPage, settings: settingsPage }[state.page] || impactPage)();
+    rules: rulesPage, customers: customersPage, activity: activityPage, settings: settingsPage,
+    onboarding: onboardingPage, operations: operationsPage, access: accessPage }[state.page] || impactPage)();
 }
 function metric(label, value, unit, footer, icon) {
   return '<article class="stat"><div class="stat-label"><span>' + label + '</span><span class="icon-box">' + ico(icon, 14) + '</span></div>' +
@@ -143,20 +158,21 @@ function impactPage() {
     metric('Median time to approval', num(m.medianApprovalMinutes, 0), 'min', speed === null ? 'Awaiting completed quote records' : '<strong>' + Math.abs(speed) + '% ' + (speed >= 0 ? 'faster' : 'slower') + '</strong> than ' + t.config.baselineApprovalMinutes + ' min reference', 'impact') +
     metric('Follow-ups on time', num(m.onTimeRate, 0), m.onTimeRate === null ? '' : '%', '<strong>' + m.followupsOnTime + ' of ' + m.followupsDue + '</strong> follow-ups due in this period', 'check') +
     metric('Quotes approved', num(m.approved), '', '<strong>' + num(m.correctionRate, 1) + '% needed corrections</strong> · review effort included', 'queue') +
-    '</div><div class="grid-two"><section class="panel"><div class="panel-head"><div><h2>Human effort over time</h2><p>Last ' + Math.min(state.days, 30) + ' days · baseline and reported effort, grouped in up to 5-day intervals</p></div><div class="legend"><span><i class="baseline"></i>Baseline</span><span><i></i>With your desk</span></div></div>' +
+    '</div>' + impactEvidence(m) + '<div class="grid-two"><section class="panel"><div class="panel-head"><div><h2>Human effort over time</h2><p>Last ' + Math.min(state.days, 30) + ' days · baseline and reported effort, grouped in up to 5-day intervals</p></div><div class="legend"><span><i class="baseline"></i>Baseline</span><span><i></i>With your desk</span></div></div>' +
     '<div class="panel-body">' + effortChart(m.daily) + '<div class="chart-tip">' + ico('info', 13) + '<span>' + num(m.actualHours, 1) + ' hours reported against ' + num(m.baselineHours, 1) + ' baseline hours · ' + m.approved + ' approved enquiries in selected period</span></div></div></section>' +
     '<section class="panel"><div class="panel-head"><div><h2>Needs your team’s attention</h2><p>Current work, across all dates</p></div>' + ico('arrow', 17) + '</div><div class="panel-body">' +
+    (viewer() ? '<p class="muted">Your operations team has ' + m.pendingApprovals + ' approvals, ' + m.needsReview + ' clarification cases and ' + m.overdue + ' overdue follow-ups to review.</p>' :
     attention('Quotes to approve', 'Ready for a human decision', m.pendingApprovals, 'awaiting_approval', 'queue', 'amber') +
     attention('Product questions', 'Specifications or quantities needed', m.needsReview, 'needs_review', 'alert', 'red') +
-    attention('Overdue follow-ups', 'Customer responses still pending', m.overdue, 'overdue', 'clock', '') +
+    attention('Overdue follow-ups', 'Customer responses still pending', m.overdue, 'overdue', 'clock', '')) +
     '</div><div class="panel-note">Quotes are reviewed by your team before any simulated delivery.</div></section></div>' +
-    '<div class="grid-two"><section class="panel"><div class="panel-head"><div><h2>A mixed catalogue. One sales workflow.</h2><p>' + new Set(t.products.map((p) => p.category)).size + ' product categories · ' + m.received + ' enquiries received</p></div>' +
-    button('View catalogue', 'go-catalogue', 'arrow', true) + '</div><div class="table-wrap"><table><thead><tr><th>Product category</th><th>Enquiries</th><th>Approved</th><th>Coverage</th></tr></thead><tbody>' +
+    '<div class="grid-two"><section class="panel"><div class="panel-head"><div><h2>A mixed catalogue. One sales workflow.</h2><p>' + m.categories.length + ' product categories · ' + m.received + ' enquiries received</p></div>' +
+    (!viewer() ? button('View catalogue', 'go-catalogue', 'arrow', true) : '') + '</div><div class="table-wrap"><table><thead><tr><th>Product category</th><th>Enquiries</th><th>Approved</th><th>Coverage</th></tr></thead><tbody>' +
     m.categories.slice(0, 6).map((c) => '<tr><td><span class="category-name"><i class="category-dot"></i>' + esc(c.category) + '</span></td><td>' + c.enquiries + '</td><td>' + c.approvals +
       '</td><td><div class="mini-bar"><i style="width:' + (c.enquiries ? Math.round(c.approvals / c.enquiries * 100) : 0) + '%"></i></div></td></tr>').join('') +
     '</tbody></table>' + (!m.categories.length ? empty('No catalogue yet', 'Add or import products to begin.') : '') + '</div><div class="panel-note">Multi-category enquiries appear in each relevant category. Category rows are not additive.</div></section>' +
-    '<section class="panel"><div class="panel-head"><div><h2>Recent activity</h2><p>Actions with a traceable record</p></div>' + button('All activity', 'go-activity', '', true) + '</div><div class="panel-body">' +
-    activityList(state.data.events.slice(0, 5)) + '</div></section></div>' +
+    '<section class="panel"><div class="panel-head"><div><h2>Recent activity</h2><p>Actions with a traceable record</p></div>' + (!viewer() ? button('All activity', 'go-activity', '', true) : '') + '</div><div class="panel-body">' +
+    (viewer() ? '<p class="muted">Detailed operational records are restricted to your operations team.</p>' : activityList(state.data.events.slice(0, 5))) + '</div></section></div>' +
     '<div class="footer-line"><span><span class="dot">●</span> Updated ' + date(new Date(), true) + ' IST · ' + esc(t.name) + '</span><span>Estimated impact uses customer-specific baselines.</span></div>';
 }
 function effortChart(rows) {
@@ -204,8 +220,8 @@ function queuePage() {
 }
 function filteredEnquiries() {
   return tenant().enquiries.filter((e) => {
-    const active = ['new', 'needs_review', 'awaiting_approval', 'approved'].includes(e.status) || (e.status === 'sent' && e.followup && !e.followup.sentAt);
-    const overdue = e.status === 'sent' && e.followup && !e.followup.sentAt && new Date(e.followup.dueAt) < new Date();
+    const active = ['new', 'needs_review', 'awaiting_approval', 'approved'].includes(e.status) || (e.status === 'sent' && e.followup && e.followup.status !== 'cancelled' && !e.followup.sentAt);
+    const overdue = e.status === 'sent' && e.followup && e.followup.status !== 'cancelled' && !e.followup.sentAt && new Date(e.followup.dueAt) < new Date();
     return (state.queue === 'all' || (state.queue === 'active' ? active : state.queue === 'overdue' ? overdue : e.status === state.queue)) &&
       (!state.channel || e.channel === state.channel) &&
       (!state.query || (e.buyer + e.reference + e.route.owner + e.items.map((p) => p.sku).join(' ')).toLowerCase().includes(state.query.toLowerCase()));
@@ -222,17 +238,20 @@ function queueRows() {
 function cataloguePage() {
   const products = tenant().products;
   return pageHead('A catalogue without category limits', 'Bearings, motors, pumps, tools and more. Match enquiries against each customer’s approved records.',
-    '<a href="/sample-catalogue.csv" class="button secondary" download>' + ico('down', 14) + 'Sample CSV</a>' + button('Import CSV', 'import-catalogue', 'down', true) + button('Add product', 'add-product', 'plus')) + demoStrip() +
+    admin() ? '<a href="/sample-catalogue.csv" class="button secondary" download>' + ico('down', 14) + 'Sample CSV</a>' + button('Import CSV', 'import-catalogue', 'down', true) + button('Add product', 'add-product', 'plus') : '') + demoStrip() +
     '<input type="file" id="catalogue-upload" accept=".csv,text/csv" hidden><div class="filters"><div class="search-field">' + ico('search', 16) +
     '<input id="product-search" aria-label="Search catalogue" placeholder="Search SKU, product or category…"></div><span class="pill gray">' + products.length + ' products · ' +
     new Set(products.map((p) => p.category)).size + ' categories</span></div><section class="panel"><div class="table-wrap"><table><thead><tr><th>SKU / product</th><th>Category</th><th>Unit price</th><th>Stock</th><th>Source</th><th></th></tr></thead><tbody id="product-rows">' +
-    productRows(products) + '</tbody></table></div></section>';
+    productRows(products) + '</tbody></table></div></section>' +
+    (admin() && tenant().catalogueHistory?.length ? '<details><summary>Restore a previous catalogue</summary><p class="muted">The current catalogue is retained as a rollback snapshot. Existing quotes still require current source checks.</p><form data-form="catalogue-restore">' +
+      field('Catalogue snapshot', select('snapshotId', tenant().catalogueHistory.toReversed().map((h) => ({ value: h.id, label: date(h.at, true) + ' · ' + h.products.length + ' products · ' + h.actor })))) +
+      formFooter('Restore catalogue') + '</form></details>' : '');
 }
 function productRows(products) {
   return products.length ? products.map((p) => '<tr><td><span class="sku">' + esc(p.sku) + '</span><span class="subtext">' + esc(p.name) +
     '</span></td><td>' + pill(p.category, 'gray') + '</td><td>' + money(p.price) + '<span class="subtext">per ' + esc(p.unit) + '</span></td><td>' +
-    num(p.stock) + '</td><td>' + esc(p.source) + '<span class="subtext">' + date(p.updatedAt) + '</span></td><td><button class="icon-button" data-action="edit-product" data-id="' +
-    esc(p.id) + '" aria-label="Edit ' + esc(p.sku) + '">' + ico('edit', 15) + '</button></td></tr>').join('') : '<tr><td colspan="6">' + empty('No products yet', 'Import a CSV or add your first catalogue record.') + '</td></tr>';
+    num(p.stock) + '</td><td>' + esc(p.source) + '<span class="subtext">' + date(p.updatedAt) + '</span></td><td>' + (admin() ? '<button class="icon-button" data-action="edit-product" data-id="' +
+    esc(p.id) + '" aria-label="Edit ' + esc(p.sku) + '">' + ico('edit', 15) + '</button>' : '') + '</td></tr>').join('') : '<tr><td colspan="6">' + empty('No products yet', 'An administrator can import the approved catalogue.') + '</td></tr>';
 }
 function connectorsPage() {
   const configured = tenant().connectors, names = new Set(configured.map((c) => c.name));
@@ -286,6 +305,21 @@ function settingsPage() {
     field('Maximum permitted discount (%)', input('maxDiscount', c.maxDiscount, 'number', 'required min="0" max="50" step=".1"')) +
     field('Tax rate (%)', input('taxRate', c.taxRate, 'number', 'required min="0" max="50" step=".1"'), 'Illustrative quote setting; verify tax treatment before live use.') +
     field('Follow-up after (calendar days)', input('followupDays', c.followupDays, 'number', 'required min="1" max="30" step="1"'), 'This prototype schedules a task; it does not send automatically.') +
+    field('Maximum catalogue age (minutes)', input('maxDataAgeMinutes', c.maxDataAgeMinutes, 'number', 'required min="1" max="43200"')) +
+    field('Approval expires after (hours)', input('approvalExpiryHours', c.approvalExpiryHours, 'number', 'required min="1" max="720"')) +
+    field('Quote validity (days)', input('validityDays', c.validityDays, 'number', 'required min="1" max="365"')) +
+    field('Freight (INR)', input('freight', c.freight, 'number', 'required min="0" step=".01"')) +
+    field('Payment terms', input('paymentTerms', c.paymentTerms, 'text', 'maxlength="1000"')) +
+    field('Delivery terms', input('deliveryTerms', c.deliveryTerms, 'text', 'maxlength="1000"')) +
+    field('Measured baseline sample size', input('baselineSampleSize', c.baselineSampleSize, 'number', 'required min="0" step="1"')) +
+    field('Baseline scope / comparable case definition', input('baselineScope', c.baselineScope, 'text', 'maxlength="1000"')) +
+    field('Baseline start', input('baselineFrom', c.baselineFrom, 'date')) +
+    field('Baseline end', input('baselineTo', c.baselineTo, 'date')) +
+    field('Your setup effort (minutes)', input('setupMinutes', c.setupMinutes, 'number', 'required min="0"')) +
+    field('Your support effort (minutes)', input('supportMinutes', c.supportMinutes, 'number', 'required min="0"')) +
+    field('Monthly customer fee (INR)', input('monthlyFee', c.monthlyFee, 'number', 'required min="0" step=".01"')) +
+    field('Monthly operating cost (INR)', input('operatingCost', c.operatingCost, 'number', 'required min="0" step=".01"')) +
+    '<label class="checkbox-label full"><input type="checkbox" name="paused"' + (c.paused ? ' checked' : '') + '> Pause dispatch jobs for this workspace</label>' +
     field('Default owner', select('defaultOwner', state.data.team, c.defaultOwner)) +
     field('Timezone and currency', '<input value="Asia/Kolkata · INR" disabled>') +
     '</div><div class="form-footer"><span class="muted" style="margin-right:auto;font-size:11px">Configuration version ' + c.version + '</span><button class="button" type="submit">' +
@@ -295,6 +329,10 @@ function settingsPage() {
 function openModal(title, subtitle, content) {
   modal.innerHTML = '<header class="modal-head"><div><h2 id="modal-title">' + esc(title) + '</h2><p>' + esc(subtitle) + '</p></div><button class="icon-button" data-action="close-modal" aria-label="Close dialog">' +
     ico('close') + '</button></header><div class="modal-body">' + content + '<div id="modal-error" class="error-message" role="alert"></div></div>';
+  modal.querySelectorAll('[data-id]').forEach((node) => {
+    const e = tenant()?.enquiries?.find((e) => e.id === node.dataset.id);
+    if (e) node.dataset.version = String(e.version);
+  });
   if (!modal.open) modal.showModal();
 }
 function formFooter(label) { return '<div class="form-footer">' + button('Cancel', 'close-modal', '', true) + '<button class="button" type="submit">' + esc(label) + ' ' + ico('arrow', 14) + '</button></div>'; }
@@ -317,10 +355,13 @@ function showEnquiry(enquiryId) {
   const position = ({ new: 1, needs_review: 0, awaiting_approval: 2, approved: 3, sent: 4, won: 4 })[e.status];
   let content = '<div class="row-flex" style="justify-content:space-between">' + statusPill(e.status) + '<span class="muted" style="font-size:10px">' + date(e.createdAt, true) + ' IST</span></div>' +
     '<div class="stepper">' + stages.map((s, i) => '<span class="' + (i < position ? 'done' : i === position ? 'current' : '') + '">' + s + '</span>').join('') +
-    '</div><h3>Original enquiry · ' + esc(e.channel) + '</h3><div class="raw-message">' + esc(e.message) + '</div>' +
+    '</div><h3>Original enquiry · ' + esc(e.originalChannel || e.channel) + '</h3><div class="raw-message">' + esc(e.message) + '</div>' +
     '<div class="route-note"><strong>' + esc(e.route.queue) + '</strong> · ' + esc(e.route.owner) + '<br>' + esc(e.route.reason) + ' · configuration v' + e.route.configVersion + '</div>';
   if (e.missing.length) content += '<div class="warning"><strong>Your team needs to resolve:</strong><br>' + e.missing.map(esc).join('<br>') + '</div>' +
-    button('Confirm catalogue products', 'clarify-enquiry', 'catalogue', false, 'data-id="' + e.id + '"');
+    '';
+  if (!['won', 'lost'].includes(e.status)) content += button('Edit products & quantities', 'clarify-enquiry', 'catalogue', true, 'data-id="' + e.id + '"');
+  const holds = state.data.commercialHolds?.[e.id] || [];
+  if (holds.length) content += '<div class="warning" style="margin-top:15px"><b>Commercial review needed</b><br>' + holds.map(esc).join('<br>') + '</div>';
   if (e.items.length) {
     content += '<h3 style="margin-top:22px">Catalogue matches and quoted terms</h3><div class="table-wrap"><table class="quote-table"><thead><tr><th>Product / source</th><th>Quantity</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>' +
       e.items.map((i) => '<tr><td><span class="sku">' + esc(i.sku) + '</span><span class="subtext">' + esc(i.name) + '</span><span class="subtext">' + esc(i.match) + ' · ' + esc(i.source) +
@@ -330,25 +371,26 @@ function showEnquiry(enquiryId) {
   if (e.quote) content += '<div class="quote-total"><span>Subtotal ' + money(e.quote.subtotal) + ' · discount ' + e.quote.discount + '% · tax ' + e.quote.taxRate +
     '%</span><span>Quote revision ' + e.quote.revision + '<b>' + money(e.quote.total) + '</b></span></div>';
   const idAttr = 'data-id="' + e.id + '"';
-  if (e.status === 'new' || e.status === 'awaiting_approval' || e.status === 'approved') {
+  if (['new', 'awaiting_approval', 'approved', 'sent'].includes(e.status) && !e.missing.length) {
     content += '<form data-form="draft" data-id="' + e.id + '"><div class="form-grid">' +
       field('Discount (%)', input('discount', e.quote?.discount || 0, 'number', 'required min="0" max="' + tenant().config.maxDiscount + '" step=".1"')) +
+      field('Revision / refresh reason', input('reason', '', 'text', 'required maxlength="300"')) +
+      '<label class="checkbox-label full"><input type="checkbox" name="backorderConfirmed"> Approve backordering only where a catalogue lead time is recorded</label>' +
       '<div style="align-self:end"><button type="submit" class="button secondary">' + (e.quote ? 'Revise quote draft' : 'Prepare quote draft') + '</button></div></div>' +
       '<p class="subtext">A revised draft needs a fresh approval.</p></form>';
   }
-  if (e.status === 'awaiting_approval') content += '<div class="spacer"></div><form data-form="approve" data-id="' + e.id + '" data-revision="' + e.quote.revision + '">' +
-    field('Total human effort (minutes)', input('manualMinutes', '', 'number', 'required min="0" max="1440" step=".1"'), 'Include reading, checking, corrections and approval. This is used in impact reporting.') +
+  if (e.status === 'awaiting_approval' && approver()) content += '<div class="spacer"></div><form data-form="approve" data-id="' + e.id + '" data-revision="' + e.quote.revision + '">' +
+    field('Additional human effort (minutes)', input('manualMinutes', '', 'number', 'required min="0" max="1440" step=".1"'), 'Add only effort not already recorded: reading, checking, corrections and approval. Earlier effort is retained. Already recorded: ' + num(e.manualMinutes || 0, 1) + ' minutes.') +
     '<label class="checkbox-label" style="margin-top:15px"><input type="checkbox" name="corrected"' + (e.corrected ? ' checked' : '') + '> This enquiry required corrections</label>' +
     '<label class="checkbox-label" style="margin-top:12px"><input type="checkbox" name="reviewConfirmed" required> I checked product suitability, availability, prices and delivery terms</label>' +
     formFooter('Approve quote') + '</form>';
-  else if (e.status === 'approved') content += '<div class="warning" style="margin-top:20px">Sending records a simulated delivery receipt. It does not contact the buyer.</div>' +
-    '<form data-form="outbound" data-id="' + e.id + '"><div class="form-grid">' + field('Delivery channel', select('channel', channelOptions(true), e.channel)) +
-    '<div style="align-self:end"><button class="button secondary" type="submit">Set channel</button></div></div></form><div class="form-footer">' +
-    button('Simulate quote delivery', 'send-quote', 'arrow', false, idAttr + ' data-revision="' + e.quote.revision + '"') + '</div>';
+  else if (e.status === 'approved') content += '<div class="warning" style="margin-top:20px">Queue a durable simulation job. No buyer will be contacted. Dispatch rechecks the current revision, commercial data and workspace pause state.</div><div class="form-footer">' +
+    button('Queue simulated delivery', 'send-quote', 'arrow', false, idAttr + ' data-revision="' + e.quote.revision + '"') + '</div>';
   else if (e.status === 'sent') content += '<div class="route-note">Simulated quote delivery recorded ' + date(e.sentAt, true) + '.<br>Follow-up ' +
     (e.followup?.sentAt ? 'recorded ' + date(e.followup.sentAt, true) : 'due ' + date(e.followup?.dueAt, true)) + '.</div><div class="form-footer">' +
-    (!e.followup?.sentAt ? button('Simulate follow-up', 'send-followup', 'clock', true, idAttr) : '') + button('Link demo order', 'link-order', 'check', false, idAttr) + '</div>';
+    (!e.followup?.sentAt && e.followup?.status !== 'cancelled' ? '<span class="muted">Follow-up queued for its due time; record a reply below to stop it.</span>' : '') + button('Link demo order', 'link-order', 'check', false, idAttr) + '</div>';
   else if (e.status === 'won') content += '<div class="route-note"><strong>' + money(e.orderValue) + ' demo order linked.</strong><br>Recorded order value does not establish incremental revenue. Follow-up is stopped.</div>';
+  content += enquiryExtras(e);
   openModal(e.reference + ' · ' + e.buyer, 'Review this enquiry and progress it through the sales workflow.', content);
 }
 function productForm(product = {}) {
@@ -359,6 +401,12 @@ function productForm(product = {}) {
     field('Unit', input('unit', product.unit || 'unit', 'text', 'required maxlength="40"')) +
     field('Unit price (INR)', input('price', product.price ?? '', 'number', 'required min="0" max="100000000" step=".01"')) +
     field('Available stock', input('stock', product.stock ?? '', 'number', 'required min="0" max="100000000" step=".01"')) +
+    field('Pack size / permitted multiple', input('packSize', product.packSize ?? 1, 'number', 'required min=".001" step=".001"')) +
+    field('Minimum quantity', input('minimumQuantity', product.minimumQuantity ?? .01, 'number', 'required min=".001" step=".001"')) +
+    field('Lead time / backorder terms', input('leadTime', product.leadTime || '', 'text', 'maxlength="200"')) +
+    field('Product tax rate (blank uses default)', input('taxRate', product.taxRate ?? '', 'number', 'min="0" max="50" step=".01"')) +
+    '<div class="full">' + field('Customer price breaks (JSON)', '<textarea name="customerPrices" spellcheck="false">' + esc(JSON.stringify(product.customerPrices || [])) + '</textarea>',
+      'Example: [{"buyerId":"CUSTOMER-001","minQuantity":10,"price":395}]. IDs must match the enquiry customer master ID.') + '</div>' +
     field('Record source', input('source', product.source || 'Team catalogue', 'text', 'required maxlength="100"')) +
     '<div class="full">' + field('Known aliases, separated by commas', input('aliases', product.aliases?.join(', ') || ''), 'Ambiguous aliases are sent for review.') + '</div></div>' +
     formFooter('Save product') + '</form>');
@@ -367,7 +415,7 @@ function customerForm() {
   openModal('Add a customer workspace', 'Each distributor gets separate data, connector mappings and operating rules.',
     '<form data-form="customer"><div class="form-grid">' + field('Distributor name', input('name', '', 'text', 'required maxlength="200"')) +
     field('City', input('city', '', 'text', 'required maxlength="200"')) +
-    '<label class="checkbox-label full"><input type="checkbox" name="sampleCatalogue" checked> Start with the mixed sample catalogue and simulated Email / WhatsApp channels</label></div>' +
+    '<label class="checkbox-label full"><input type="checkbox" name="sampleCatalogue"> Create an intentional demo with a fictional mixed catalogue and simulated channels</label></div>' +
     formFooter('Create workspace') + '</form>');
 }
 function ruleForm(rule = {}) {
@@ -385,7 +433,7 @@ function ruleForm(rule = {}) {
 }
 function connectorForm(connector = {}) {
   const kind = connector.kind || 'system';
-  const mapping = connector.mapping || (kind === 'channel' ? { buyer: 'customer.name', message: 'message.text' } :
+  const mapping = connector.mapping || (kind === 'channel' ? { buyer: 'customer.name', message: 'message.text', sourceMessageId: 'message.id' } :
     { sku: 'item.code', name: 'item.name', category: 'item.category', price: 'item.price', stock: 'item.stock' });
   openModal(connector.id ? 'Configure ' + connector.name : 'Configure a connector', 'Declare available capabilities and normalize sample payloads. No account credentials are stored.',
     '<form data-form="connector" data-id="' + esc(connector.id || '') + '"><div class="form-grid">' +
@@ -400,7 +448,7 @@ function connectorForm(connector = {}) {
 }
 function connectorTest(connectorId) {
   const c = tenant().connectors.find((c) => c.id === connectorId);
-  const payload = c.kind === 'channel' ? { customer: { name: 'Nexus Fabrication' }, message: { text: 'Please quote 20 × SKF-6205-2RS' } } :
+  const payload = c.kind === 'channel' ? { customer: { name: 'Nexus Fabrication' }, message: { id: crypto.randomUUID(), text: 'Please quote 20 × SKF-6205-2RS' } } :
     { item: { code: 'SKF-6205-2RS', name: 'Sealed bearing', category: 'Bearings', price: 420, stock: 480 } };
   openModal('Test ' + c.name + ' payload', 'Validates field mapping against sample JSON. This does not test a live connection.',
     '<form data-form="connector-test" data-id="' + c.id + '">' + field('Sample payload (JSON)', '<textarea name="payload" required spellcheck="false" style="min-height:210px;font-family:var(--mono)">' +
@@ -411,25 +459,115 @@ function connectorTest(connectorId) {
 function clarifyForm(enquiryId) {
   const e = tenant().enquiries.find((e) => e.id === enquiryId);
   openModal('Confirm products · ' + e.reference, 'Your team resolves the specification question. Choose exact catalogue items.',
-    '<form data-form="clarify" data-id="' + e.id + '"><div id="clarification-lines">' + clarificationLine() +
-    '</div><div class="spacer"></div>' + button('Add another product', 'add-clarification-line', 'plus', true) + formFooter('Confirm selection') + '</form>');
+    '<form data-form="clarify" data-id="' + e.id + '"><div id="clarification-lines">' + (e.items.length ? e.items.map(clarificationLine).join('') : clarificationLine()) +
+    '</div><div class="spacer"></div>' + button('Add another product', 'add-clarification-line', 'plus', true) +
+    field('Correction reason', input('reason', '', 'text', 'required maxlength="300"')) + formFooter('Create corrected draft') + '</form>');
 }
-function clarificationLine() {
-  return '<div class="form-grid" style="margin-bottom:12px">' + field('Catalogue product', select('sku', tenant().products.map((p) => ({ value: p.sku, label: p.sku + ' · ' + p.name })))) +
-    field('Quantity', input('quantity', 1, 'number', 'required min=".01" max="1000000" step=".01"')) + '</div>';
+function clarificationLine(line = {}) {
+  return '<div class="form-grid correction-line" style="margin-bottom:12px">' + field('Catalogue product', select('sku', tenant().products.map((p) => ({ value: p.sku, label: p.sku + ' · ' + p.name })), line.sku)) +
+    field('Quantity', input('quantity', line.quantity || 1, 'number', 'required min=".001" max="1000000" step=".001"')) + button('Remove line', 'remove-line', 'close', true) + '</div>';
 }
 function methodology() {
   openModal('How impact is measured', 'Every number comes from recorded events and an explicit comparison method.',
     '<p class="muted" style="font-size:12px;line-height:1.8">All seeded records are fictional. New actions are recorded by this prototype; external deliveries remain simulated.</p><div class="method-grid">' +
     [
-      ['Estimated human effort saved', 'For enquiries approved in the selected period: sum of each enquiry’s saved baseline minutes minus total reported human minutes, divided by 60. Review and correction time are included. Negative savings are retained.'],
+      ['Estimated human effort saved', 'For distinct enquiries first approved in the selected period: saved baseline minus cumulative recorded effort through the reporting end. Revisions retain effort and approval history. Negative savings are retained. Effort on other cases is shown separately.'],
       ['Median approval turnaround', 'Elapsed minutes from enquiry receipt to human approval. This includes waiting time and is separate from active human effort. Comparison uses the customer’s configured reference.'],
       ['Follow-ups on time', 'Follow-ups due in the selected period with a simulated delivery timestamp on or before their deadline, divided by all non-cancelled follow-ups due in that period.'],
       ['Correction rate', 'Approved enquiries marked as requiring corrections, divided by approved enquiries with reported human effort. Unresolved enquiries remain visible in the work queue.'],
       ['Estimated capacity value', 'Estimated hours saved multiplied by the configured loaded hourly cost. This is an estimate of capacity value, not money saved or realised ROI.'],
       ['Linked order value', 'Recorded orders linked to sent quotes. This reports associated value; it does not claim the system caused additional revenue.']
     ].map(([title, detail]) => '<div class="method-item"><b>' + title + '</b><p>' + detail + '</p></div>').join('') +
-    '</div><div class="form-footer">' + button('View customer baselines', 'go-settings', 'settings') + '</div>');
+    '</div><div class="form-footer">' + (admin() ? button('View customer baselines', 'go-settings', 'settings') : '') + '</div>');
+}
+
+function impactEvidence(m) {
+  const f = m.funnel;
+  return '<section class="panel evidence"><div class="panel-head"><div><h2>Evidence behind the numbers</h2><p>' +
+    m.sampleSize + ' distinct first-approved enquiries · ' + (m.measuredBaseline ? 'Measured baseline recorded' : 'Baseline is a configured estimate; collect a measured sample before claiming ROI') +
+    '</p></div></div><div class="panel-body"><div class="funnel">' +
+    [['Received', f.received], ['Drafted', f.drafted], ['Approved', f.approved], ['Simulated dispatch', f.simulatedDispatches], ['Actual dispatch', f.actualDispatches], ['Orders linked', f.linkedOrders]]
+      .map(([label, n]) => '<div><strong>' + n + '</strong><small>' + label + '</small></div>').join('') +
+    '</div><p class="muted">Funnel uses enquiries received in the selected period. Approval headlines use first approval in the period; the cohorts can differ.</p>' +
+    '<p class="muted">Initial matching without clarification: ' + num(m.matchedRate, 1) + '% (' + m.matchingSampleSize + ' recorded observations; legacy unknowns excluded) · 90th-percentile approval time: ' + num(m.p90ApprovalMinutes, 0) +
+    ' min · all recorded handling effort in period: ' + num(m.periodEffortMinutes, 1) + ' min.</p>' +
+    '<p class="muted">Order value is associated volume. Capacity value is not realized cash savings.</p></div></section>';
+}
+
+function enquiryExtras(e) {
+  const closed = ['won', 'lost'].includes(e.status);
+  const pending = state.data.jobs.filter((j) => j.enquiryId === e.id && ['queued', 'held'].includes(j.status));
+  return '<div class="spacer"></div>' +
+    (pending.length ? '<div class="route-note"><b>Delivery jobs</b><br>' + pending.map((j) => esc(j.kind + ' · ' + j.status + ' · ' + (j.result || 'Due ' + date(j.dueAt, true)))).join('<br>') + '</div>' : '') +
+    (!closed && e.status !== 'sent' && e.status !== 'approved' ? '<details><summary>Buyer and outbound destination</summary><form data-form="outbound" data-id="' + e.id + '"><div class="form-grid">' +
+      field('Delivery channel', select('channel', channelOptions(true), e.outboundChannel)) +
+      field('Recipient email / phone / account ID', input('recipient', e.recipient, 'text', 'required maxlength="200"')) +
+      field('Customer master ID', input('buyerId', e.buyerId, 'text', 'maxlength="100"')) + '</div>' + formFooter('Save destination') + '</form></details>' : '') +
+    (!closed ? '<details><summary>Record a buyer response / stop follow-up</summary><form data-form="response" data-id="' + e.id + '">' +
+      field('Response type', select('kind', [{ value: 'reply', label: 'Buyer replied' }, { value: 'decline', label: 'Buyer declined' }, { value: 'opt_out', label: 'Opted out' }, { value: 'pause', label: 'Pause conversation' }])) +
+      field('Response / reason', '<textarea name="text" required maxlength="4000"></textarea>') + formFooter('Record response') + '</form></details>' : '') +
+    '<details><summary>Add review or fallback effort · ' + num(e.manualMinutes || 0, 1) + ' min already recorded</summary><form data-form="effort" data-id="' + e.id + '">' +
+      field('Additional minutes', input('minutes', '', 'number', 'required min=".01" max="1440" step=".01"')) +
+      field('Work performed', input('note', '', 'text', 'required maxlength="300"')) + formFooter('Add effort') + '</form></details>' +
+    (!closed ? '<details><summary>Assign an owner</summary><form data-form="assign" data-id="' + e.id + '">' +
+      field('Workspace operator', select('userId', state.data.members.filter((u) => u.role !== 'viewer').map((u) => ({ value: u.id, label: u.name })), e.route.ownerId)) +
+      formFooter('Assign owner') + '</form></details>' : '') +
+    '<details><summary>Approved revisions · ' + e.approvals.length + '</summary>' +
+      (e.approvals.length ? e.approvals.map((a) => '<p><a class="document-link" target="_blank" rel="noopener" href="' + base() + '/quote/' + e.id + '?revision=' + a.revision + '">' +
+        'Open approved revision ' + a.revision + '</a> · ' + esc(a.actor) + ' · ' + date(a.at, true) + '</p>').join('') : '<p class="muted">No approved revision yet.</p>') +
+      '</details><div class="form-footer">' + button('Refresh enquiry', 'refresh-enquiry', 'activity', true, 'data-id="' + e.id + '"') + '</div>';
+}
+
+function onboardingPage() {
+  const o = tenant().onboarding;
+  return pageHead('Prepare a dependable pilot', 'No customer account is connected yet. Use this workspace to validate the workflow before live onboarding.') +
+    '<div class="grid-two"><section class="panel form-panel"><h2>Scope and accountable people</h2><form data-form="onboarding"><div class="form-grid">' +
+    [['scope', 'Pilot scope / eligible enquiries'], ['formats', 'Input formats and languages'], ['processOwner', 'Customer process owner'], ['technicalOwner', 'Technical / catalogue owner'], ['acceptance', 'Measurable acceptance criteria'], ['recoveryEvidence', 'Recovery and acceptance evidence reference']]
+      .map(([key, label]) => field(label, '<textarea name="' + key + '" maxlength="2000">' + esc(o[key]) + '</textarea>')).join('') +
+    '<label class="checkbox-label full"><input type="checkbox" name="accepted"' + (o.acceptedAt ? ' checked' : '') + '> Record acceptance of the documented recovery evidence</label>' +
+    '</div>' + formFooter('Save pilot setup') + '</form></section><section class="panel"><div class="panel-head"><div><h2>Readiness gates</h2><p>Live-provider readiness stays incomplete until an adapter is implemented and independently tested.</p></div></div><div class="panel-body">' +
+    state.data.readiness.map((r) => '<div class="readiness-row">' + pill(r.complete ? 'Recorded' : 'Needed', r.complete ? '' : 'amber') + '<span>' + esc(r.label) + '</span></div>').join('') +
+    '<p class="muted">Recorded evidence is an operator declaration, not an automated certification.</p></div></section></div>';
+}
+
+function operationsPage() {
+  const t = tenant(), jobs = state.data.jobs;
+  const stale = t.products.filter((p) => Date.now() - new Date(p.updatedAt) > t.config.maxDataAgeMinutes * 60000).length;
+  const e = state.data.metrics.economics;
+  return pageHead('Delivery & operational health', 'Durable simulation jobs survive restarts. Held jobs require review; no external provider is connected.', button('Refresh', 'refresh', 'activity', true)) +
+    '<div class="stats">' + metric('Held jobs', jobs.filter((j) => j.status === 'held').length, '', 'Review the reason before retrying', 'alert') +
+    metric('Stale catalogue records', stale, '', 'Dispatch checks source freshness', 'clock') +
+    metric('Dispatch state', t.config.paused ? 'Paused' : 'Enabled', '', 'Simulation only', 'queue') +
+    metric('Available live adapters', '0', '', 'Configuration presets are not connections', 'connectors') + '</div>' +
+    (admin() ? '<div class="toolbar" style="margin-bottom:20px">' + button('Pause / resume settings', 'go-settings', 'settings', true) +
+      '<a class="button secondary" href="' + base() + '/export" download>Export workspace</a></div>' : '') +
+    '<section class="panel"><div class="table-wrap"><table><thead><tr><th>Job / enquiry</th><th>Mode / due</th><th>Status</th><th>Result</th><th>Review</th></tr></thead><tbody>' +
+    jobs.map((j) => '<tr><td>' + esc(j.kind) + '<span class="subtext">' + esc(t.enquiries.find((x) => x.id === j.enquiryId)?.reference || j.enquiryId) + ' · revision ' + j.revision + '</span></td><td>Simulation<span class="subtext">' + date(j.dueAt, true) +
+      '</span></td><td>' + pill(j.status, j.status === 'held' ? 'amber' : 'gray') + '</td><td>' + esc(j.result || '—') + '</td><td>' +
+      (j.status === 'held' ? button('Retry', 'retry-job', '', true, 'data-id="' + j.id + '"') : '') +
+      (['queued', 'held'].includes(j.status) ? button('Cancel', 'cancel-job', '', true, 'data-id="' + j.id + '"') : '') + '</td></tr>').join('') +
+    (!jobs.length ? '<tr><td colspan="5">No delivery jobs yet.</td></tr>' : '') + '</tbody></table></div></section>' +
+    (admin() && e ? '<section class="panel form-panel evidence"><h2>Your service economics</h2><p>Recorded setup: ' + e.setupHours + ' hours · support: ' + e.supportHours + ' hours.<br>Monthly fee: ' + money(e.monthlyFee) + ' · monthly operating cost: ' + money(e.operatingCost) +
+      '. Staff effort is additional; this is not a profit calculation.</p></section>' : '');
+}
+
+function accessPage() {
+  return pageHead('People & workspace access', 'Each person signs in individually. Viewer accounts can access only their assigned impact dashboards.', button('Add person', 'add-user', 'plus')) +
+    '<section class="panel"><div class="table-wrap"><table><thead><tr><th>Person</th><th>Role / status</th><th>Workspace memberships</th><th></th></tr></thead><tbody>' +
+    state.data.users.map((u) => '<tr><td>' + esc(u.name) + '<span class="subtext">' + esc(u.email) + '</span></td><td>' + pill(u.admin ? 'Administrator' : 'Assigned roles') +
+      '<span class="subtext">' + (u.active ? 'Active' : 'Disabled') + '</span></td><td>' + (u.admin ? 'All workspaces' : u.memberships.map((m) => esc(state.data.customers.find((c) => c.id === m.customerId)?.name || m.customerId) + ': ' + esc(m.role)).join('<br>') || 'No access') +
+      '</td><td>' + button('Edit', 'edit-user', 'edit', true, 'data-id="' + u.id + '"') + '</td></tr>').join('') + '</tbody></table></div></section>';
+}
+
+function userForm(u = {}) {
+  openModal(u.id ? 'Edit person' : 'Create an individual account', 'Provision a temporary unique password, share it securely and avoid putting credentials in notes.',
+    '<form data-form="user" data-id="' + esc(u.id || '') + '"><div class="form-grid">' +
+    field('Name', input('name', u.name, 'text', 'required')) + field('Email', input('email', u.email, 'email', 'required')) +
+    field(u.id ? 'New password (leave blank to retain)' : 'Initial password (16+ characters)', input('password', '', 'password', (u.id ? '' : 'required ') + 'minlength="16" autocomplete="new-password"')) +
+    '<label class="checkbox-label"><input type="checkbox" name="admin"' + (u.admin ? ' checked' : '') + '> Administrator: all workspaces and configuration</label>' +
+    '<label class="checkbox-label full"><input type="checkbox" name="active"' + (u.active !== false ? ' checked' : '') + '> Active account</label>' +
+    state.data.customers.map((c) => field(c.name, select('membership:' + c.id, [{ value: '', label: 'No access' }, { value: 'viewer', label: 'Impact viewer' }, { value: 'operator', label: 'Operator' }, { value: 'approver', label: 'Commercial approver' }], u.memberships?.find((m) => m.customerId === c.id)?.role))).join('') +
+    '</div>' + formFooter('Save person') + '</form>');
 }
 
 document.addEventListener('click', async (event) => {
@@ -445,7 +583,17 @@ document.addEventListener('click', async (event) => {
     if (action.startsWith('go-')) { modal.close(); state.page = action.slice(3); state.query = ''; return render(); }
     if (action === 'reload') return initialize();
     if (action === 'method') return methodology();
-    if (action === 'demo-login') { const result = await api('/api/login', 'POST', { password: 'demo-sales-desk' }); state.csrf = result.csrf; return load(); }
+    if (action === 'demo-login') { const result = await api('/api/login', 'POST', { email: 'demo@qmate.local', password: 'demo-sales-desk-2026' }); state.csrf = result.csrf; return load(); }
+    if (action === 'refresh') return load();
+    if (action === 'refresh-enquiry') { await load(); return showEnquiry(itemId); }
+    if (action === 'remove-line') return control.closest('.correction-line').remove();
+    if (action === 'add-user') return userForm();
+    if (action === 'edit-user') return userForm(state.data.users.find((u) => u.id === itemId));
+    if (action === 'retry-job' || action === 'cancel-job') { await api(base() + '/jobs/' + itemId + '/' + (action === 'retry-job' ? 'retry' : 'cancel'), 'POST', {}); await load(); return toast('Job updated.'); }
+    if (action === 'confirm-import') {
+      const result = await api(base() + '/products', 'POST', { products: state.importProducts });
+      state.importProducts = null; modal.close(); await load(); return toast(result.imported + ' catalogue records imported. Prior catalogue retained for rollback.');
+    }
     if (action === 'logout') { await api('/api/logout', 'POST'); return initialize(); }
     if (action === 'add-enquiry') return enquiryForm();
     if (action === 'preview-rule') return enquiryForm(true);
@@ -469,8 +617,8 @@ document.addEventListener('click', async (event) => {
     if (action === 'send-quote' || action === 'send-followup' || action === 'link-order') {
       control.disabled = true;
       const operation = { 'send-quote': 'send', 'send-followup': 'followup', 'link-order': 'won' }[action];
-      await api(base() + '/enquiries/' + itemId + '/' + operation, 'POST', { revision: Number(control.dataset.revision) });
-      await load(); showEnquiry(itemId); return toast(operation === 'won' ? 'Demo order linked. Follow-up stopped.' : 'Simulated delivery recorded. No external message sent.');
+      await api(base() + '/enquiries/' + itemId + '/' + operation, 'POST', { revision: Number(control.dataset.revision), version: Number(control.dataset.version) });
+      await load(); if (control.isConnected && modal.open) showEnquiry(itemId); return toast(operation === 'won' ? 'Demo order linked. Follow-up stopped.' : 'Simulation job queued. Refresh to check its outcome. No external message sent.');
     }
   } catch (error) { toast(error.message); if (control.isConnected) control.disabled = false; }
 });
@@ -481,10 +629,19 @@ document.addEventListener('submit', async (event) => {
   const data = new FormData(form), values = Object.fromEntries(data), kind = form.dataset.form;
   const submit = event.submitter;
   if (submit) submit.disabled = true;
-  const errorEl = document.querySelector(kind === 'login' ? '#login-error' : '#modal-error');
+  const errorEl = document.querySelector(['login', 'setup'].includes(kind) ? '#login-error' : '#modal-error');
   if (errorEl) errorEl.textContent = '';
   try {
-    if (kind === 'login') { const result = await api('/api/login', 'POST', values); state.csrf = result.csrf; return await load(); }
+    if (['login', 'setup'].includes(kind)) { const result = await api('/api/' + kind, 'POST', values); state.csrf = result.csrf; state.customer = null; state.page = 'queue'; return await load(); }
+    if (kind === 'user') {
+      const payload = { ...values, id: form.dataset.id || undefined, admin: data.has('admin'), active: data.has('active'),
+        memberships: state.data.customers.map((c) => ({ customerId: c.id, role: values['membership:' + c.id] })).filter((m) => m.role) };
+      const result = await api('/api/users', 'POST', payload); modal.close();
+      if (result.id === state.data.user.id) { state.customer = null; return initialize(); }
+      await load(); return toast('Individual account saved. Share credentials securely.');
+    }
+    if (kind === 'onboarding') { await api(base() + '/onboarding', 'POST', { ...values, accepted: data.has('accepted') }); await load(); return toast('Pilot setup saved. Live integration readiness remains separate.'); }
+    if (kind === 'catalogue-restore') { await api(base() + '/catalogue-restore', 'POST', values); modal.close(); await load(); return toast('Catalogue restored. Existing approvals remain subject to freshness checks.'); }
     if (kind === 'customer') {
       const result = await api('/api/customers', 'POST', { ...values, sampleCatalogue: data.has('sampleCatalogue') });
       modal.close(); state.page = 'impact'; await load(result.id); return toast('Customer workspace created.');
@@ -499,7 +656,7 @@ document.addEventListener('submit', async (event) => {
         esc(result.route.reason) + '<br>' + result.items.length + ' catalogue matches · ' + result.missing.length + ' questions to resolve</div>'; return;
     }
     if (kind === 'product') {
-      await api(base() + '/products', 'POST', { ...values, aliases: values.aliases.split(',').map((a) => a.trim()).filter(Boolean) });
+      await api(base() + '/products', 'POST', { ...values, customerPrices: JSON.parse(values.customerPrices), aliases: values.aliases.split(',').map((a) => a.trim()).filter(Boolean) });
     } else if (kind === 'rule') {
       await api(base() + '/rules', 'POST', { ...values, id: form.dataset.id || undefined, enabled: data.has('enabled') });
     } else if (kind === 'connector') {
@@ -512,12 +669,13 @@ document.addEventListener('submit', async (event) => {
       document.querySelector('#mapping-result').innerHTML = '<div class="result-box">Mapping valid · simulation only\n' + esc(JSON.stringify(result.mapped, null, 2)) + '</div>';
       const saved = await api('/api/bootstrap?customer=' + state.customer + '&days=' + state.days); state.data = saved; return;
     } else if (kind === 'settings') {
-      await api(base() + '/config', 'POST', values); await load(); return toast('Customer settings saved.');
-    } else if (['draft', 'approve', 'outbound', 'clarify'].includes(kind)) {
+      await api(base() + '/config', 'POST', { ...values, paused: data.has('paused') }); await load(); return toast('Customer settings saved.');
+    } else if (['draft', 'approve', 'outbound', 'clarify', 'response', 'effort', 'assign'].includes(kind)) {
       const payload = kind === 'approve' ? { ...values, revision: Number(form.dataset.revision), corrected: data.has('corrected'), reviewConfirmed: data.has('reviewConfirmed') } :
-        kind === 'clarify' ? { items: data.getAll('sku').map((sku, i) => ({ sku, quantity: data.getAll('quantity')[i] })) } : values;
+        kind === 'clarify' ? { reason: values.reason, items: data.getAll('sku').map((sku, i) => ({ sku, quantity: data.getAll('quantity')[i] })) } : { ...values, backorderConfirmed: data.has('backorderConfirmed') };
+      payload.version = Number(form.dataset.version);
       await api(base() + '/enquiries/' + form.dataset.id + '/' + kind, 'POST', payload);
-      await load(); showEnquiry(form.dataset.id); return toast(kind === 'approve' ? 'Quote approved. Impact report updated.' : 'Enquiry updated.');
+      await load(); if (form.isConnected && modal.open) showEnquiry(form.dataset.id); return toast(kind === 'approve' ? 'Quote approved. Impact report updated.' : 'Enquiry updated.');
     }
     modal.close(); await load(); toast('Saved for this customer workspace.');
   } catch (error) {
@@ -541,7 +699,13 @@ document.addEventListener('change', async (event) => {
         const obj = Object.fromEntries(headers.map((h, i) => [h, r[i] || '']));
         return { ...obj, unit: obj.unit || 'unit', source: obj.source || 'CSV import', aliases: (obj.aliases || '').split('|').map((a) => a.trim()).filter(Boolean) };
       });
-      const result = await api(base() + '/products', 'POST', { products }); await load(); toast(result.imported + ' catalogue records imported.');
+      const preview = await api(base() + '/products', 'POST', { products, preview: true });
+      state.importProducts = products;
+      openModal('Review catalogue import', preview.added + ' new · ' + preview.updated + ' updated. Existing drafts are never silently repriced.',
+        '<div class="table-wrap"><table><thead><tr><th>SKU</th><th>Price</th><th>Stock</th></tr></thead><tbody>' +
+        preview.rows.map((p) => '<tr><td>' + esc(p.sku) + '</td><td>' + money(p.price) + '</td><td>' + num(p.stock) + '</td></tr>').join('') +
+        '</tbody></table></div><p class="muted">Showing up to 20 rows. The previous catalogue is retained in the last five import snapshots.</p><div class="form-footer">' +
+        button('Cancel', 'close-modal', '', true) + button('Confirm import', 'confirm-import', 'check') + '</div>');
     }
   } catch (error) { toast(error.message); }
 });
