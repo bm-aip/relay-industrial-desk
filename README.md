@@ -1,5 +1,7 @@
 # Q-mate — Quote Automate
 
+**Version 0.2, 15 October 2026:** quotation safeguards, immutable revisions, individual identities, workspace permissions, durable simulation jobs and pilot-readiness tooling are implemented. Read [release notes and first-login migration](docs/Release_0.2_and_First_Login.md) before upgrading. No live provider is connected.
+
 Q-mate is the pilot product name, abbreviated from **Quote Automate**. It is a functional prototype of a configurable sales desk for distributors with mixed industrial catalogues. Your operations team manages separate customer workspaces, catalogues, routing rules, channel mappings, quote review, follow-ups and impact reports. The shared workflow stays the same as customer configuration changes. No n8n is used.
 
 The pilot covers enquiries through approved quotes, follow-ups and linked orders. The name does not remove those broader workflow capabilities. External connectors and deliveries remain simulated as described below.
@@ -20,7 +22,7 @@ Requires Node.js 24. No packages or external services are required.
 npm start
 ```
 
-Open `http://127.0.0.1:3000` and select **Enter sample workspace**. The local demo password is `demo-sales-desk`; this shortcut is disabled in production. Node's experimental SQLite warning is expected.
+Open `http://127.0.0.1:3000` and select **Enter sample workspace**. The local demo identity is `demo@qmate.local` / `demo-sales-desk-2026`; this shortcut is disabled in production. Node's experimental SQLite warning is expected.
 
 ```sh
 npm run check
@@ -33,29 +35,29 @@ npm test
 2. Add a persistent volume to the application service mounted at `/app/data`. Keep **one replica**; this prototype uses a local SQLite database, not a distributed database.
 3. In service Variables, set `TEAM_PASSWORD` to a unique password of at least 16 characters. Enter it directly in Railway; never commit it. Set `PORT=3000`. `NODE_ENV=production`, `HOST=0.0.0.0` and `DATA_DIR=/app/data` are set by the Dockerfile. Set `SEED_DEMO=true` to load sample customers on an empty database, or `false` to start empty.
 4. Deploy and generate an HTTPS Railway domain with target port `3000`, matching the service's `PORT` variable.
-5. Check `/health` returns `status: ok`, then sign in with the team password. Add an enquiry, draft and review a quote, record a simulated send, and check Activity history.
+5. Check `/health` returns `status: ok`, then create the first individual administrator using the existing team password as the setup key. Add an enquiry, draft and review a quote, record a simulated send, and check Activity history.
 
 New Railway services cannot opt into the deprecated `railway.json` configuration, so this prototype uses dashboard settings. See [Railway configuration documentation](https://docs.railway.com/config-as-code), [health checks](https://docs.railway.com/deployments/healthchecks) and [persistent volumes](https://docs.railway.com/volumes).
 
-The production server refuses to start without a password of at least 16 characters. Records persist only if the volume is mounted correctly. Sessions are held in memory and end on service restart. Back up the volume before destructive changes; do not delete it to reset a demo. Database seeding only happens when the customer table is empty; changing `SEED_DEMO` does not erase existing data.
+The production server refuses to start without a password of at least 16 characters. Records persist only if the volume is mounted correctly. Individual sessions persist in SQLite as hashed tokens and are revoked when accounts are updated. The shared password is only a first-administrator setup key. Back up the volume before destructive changes; do not delete it to reset a demo. Database seeding only happens when the customer table is empty; changing `SEED_DEMO` does not erase existing data.
 
 ## Walk through the prototype
 
 1. Review **Customer impact**, its methodology and the CSV report. Switch between two sample distributors.
 2. In **Work queue**, add an enquiry such as `Please quote 30 × SKF-6205-2RS; 2 × ABB-ACS355-2.2`. Use one item per line or separate items with semicolons.
 3. Check the matched catalogue products and routing decision. Missing quantities, unknown products and ambiguous aliases require clarification.
-4. Draft a quote. Verify prices, quantities, stock and discounts against the catalogue. Record all review/correction effort and confirm commercial review before approval.
-5. Record a simulated send; this creates a follow-up task. Follow-ups require a manual action in this version. Link a fictional order to complete the example.
+4. Draft a quote. Verify prices, quantities, stock and discounts against the catalogue. Record additional review/correction effort not already captured and confirm commercial review before approval.
+5. Record a simulated send; this creates a follow-up task. Persisted simulation follow-up jobs run when due, subject to current revision, pause, source freshness and conversation eligibility. Operator-recorded replies stop pending work. Link a fictional order to complete the example.
 6. Change customer routing rules or connector payload mappings, and use the sample payload test. Import the included sample CSV or add products manually.
 7. Create a new customer workspace. It starts without historical activity and displays zero or unavailable impact metrics until work is recorded.
 
 ## Impact methodology
 
-- Estimated effort returned: each approved enquiry's baseline snapshot minus all reported review and correction minutes; negative savings are retained.
+- Estimated effort returned: each first-approved enquiry's baseline snapshot minus all reported review and correction minutes; negative savings are retained.
 - Capacity value: estimated hours multiplied by the customer's configured hourly cost. It is not cash savings.
 - Quote turnaround: median elapsed minutes from receipt to approval. This is separate from human effort.
 - On-time follow-ups: non-cancelled follow-ups due in the reporting period with a simulated send recorded on or before the deadline, divided by all non-cancelled follow-ups due in that period.
-- Correction rate: approved enquiries in the period that required corrections, divided by approved enquiries in the period.
+- Correction rate: distinct enquiries first approved in the period that required corrections, divided by approved enquiries in the period.
 - Linked order value: recorded orders, without claiming incremental revenue or causal attribution.
 
 Headline metrics support 7, 30 and 90 days; the effort chart shows the most recent 30 days at most. Multi-category enquiries appear in each relevant category, so category rows are not additive. Sample data cannot validate real customer ROI; pilot baseline and effort measurements are required.
@@ -72,6 +74,8 @@ Authenticated endpoints use `/api/customers/:customerId/...` for enquiries, prod
 
 ## Limits before a real customer pilot
 
-This is an internal team prototype with a shared password, not customer-level authentication. All team members can access all customer workspaces. It has no per-user roles, SSO, billing, background job worker, live integration, OCR/attachment processing, voice transcription, AI extraction or production monitoring. Quote sent/won transitions lock editing; catalogue changes do not silently reprice existing drafts. Basic source-message deduplication applies to direct enquiry intake; the simulated mapped-payload ingest endpoint has no provider retry contract.
+Individual identities, administrator/operator/approver/viewer roles, customer access checks, durable simulation jobs, approved revision history and backup/restore code are now implemented and tested. See the release notes for migration and validation details.
 
-Use a proper identity provider, per-customer access controls, managed database, encrypted provider credentials, durable job queue, inbound verification, observability and backup policy before processing real business data at scale. These are extension milestones, not claims of completed features.
+Provider integrations, secure provider credentials, authenticated public webhooks, real receipts, OCR/attachments, voice transcription and AI extraction are not implemented. All external outcomes remain simulated. SSO/MFA, recovery/invitations, business-hours escalation, PostgreSQL/pagination, distributed workers, external monitoring and off-volume scheduled backups remain future work.
+
+Before real customer data, authorize the dataset and configure named-user access. Before live sends, implement/test the selected adapter, validate commercial output against customer policy, verify hosting recovery and complete customer-specific acceptance. Selecting a preset does not do those things.

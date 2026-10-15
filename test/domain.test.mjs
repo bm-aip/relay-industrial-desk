@@ -34,21 +34,25 @@ test('quote approval, revisions and sends enforce state and discount limits', ()
   assert.throws(() => draftQuote(e, tenant, { discount: 11 }), /between/);
   draftQuote(e, tenant);
   assert.equal(e.quote.total, 4956);
-  approveQuote(e, { manualMinutes: 8, corrected: false });
+  approveQuote(e, { manualMinutes: 8, corrected: false, actor: 'Test approver' }, tenant);
   assert.equal(approveQuote(e, { manualMinutes: 8 }), false);
   draftQuote(e, tenant, { discount: 5 });
   assert.equal(e.quote.revision, 2);
   assert.equal(e.approvedAt, null);
   assert.throws(() => sendQuote(e, tenant), /approval/);
-  approveQuote(e, { manualMinutes: 10, corrected: true });
+  approveQuote(e, { manualMinutes: 10, corrected: true, actor: 'Test approver' }, tenant);
   assert.equal(sendQuote(e, tenant), true);
   assert.equal(sendQuote(e, tenant), false);
-  assert.throws(() => draftQuote(e, tenant), /locked/);
+  draftQuote(e, tenant, { reason: 'Buyer changed the request' });
+  assert.equal(e.quote.revision, 3);
+  assert.equal(e.approvals.length, 2);
+  assert.equal(e.manualMinutes, 18);
+  assert.equal(e.followup.status, 'cancelled');
 });
 test('disabled or inbound-only channels cannot simulate outbound delivery', () => {
   const tenant = seedTenants()[0];
   const e = makeEnquiry({ buyer: 'Test', channel: 'Web form', message: '10 × SKF-6205-2RS' }, tenant);
-  draftQuote(e, tenant); approveQuote(e, { manualMinutes: 5 });
+  draftQuote(e, tenant); approveQuote(e, { manualMinutes: 5 }, tenant);
   assert.throws(() => sendQuote(e, tenant), /cannot send/);
   tenant.connectors.find((c) => c.name === 'Email').enabled = false;
   assert.throws(() => makeEnquiry({ buyer: 'Test', channel: 'Email', message: '10 × SKF-6205-2RS' }, tenant), /Enable/);
@@ -58,7 +62,7 @@ test('impact excludes unapproved work and retains negative savings and baseline 
   const e = makeEnquiry({ buyer: 'Test', channel: 'Email', message: '10 × SKF-6205-2RS' }, tenant);
   tenant.enquiries.push(e);
   assert.equal(reporting(tenant).approved, 0);
-  draftQuote(e, tenant); approveQuote(e, { manualMinutes: 30, corrected: true });
+  draftQuote(e, tenant); approveQuote(e, { manualMinutes: 30, corrected: true }, tenant);
   tenant.config.baselineMinutes = 100;
   const report = reporting(tenant);
   assert.equal(report.approved, 1);

@@ -9,6 +9,11 @@ import { fileURLToPath } from 'node:url';
 const scratch = mkdtempSync(join(tmpdir(), 'relay-test-'));
 let child, origin, cookie, csrf, data;
 async function request(path, method = 'GET', value, authenticated = true, headers = {}) {
+  const action = /^\/api\/customers\/([^/]+)\/enquiries\/([^/]+)\/[^/]+$/.exec(path);
+  if (method === 'POST' && action && value && value.version === undefined) {
+    const current = await request('/api/bootstrap?customer=' + action[1]);
+    value = { ...value, version: current.parsed.tenant?.enquiries.find((e) => e.id === action[2])?.version };
+  }
   const response = await fetch(origin + path, { method, headers: {
     'Content-Type': 'application/json', ...(authenticated ? { Cookie: cookie || '', 'X-CSRF-Token': csrf || '' } : {}), ...headers
   }, ...(value === undefined ? {} : { body: JSON.stringify(value) }) });
@@ -30,7 +35,7 @@ before(async () => {
     child.on('error', reject);
     child.on('exit', (code) => { if (!origin) { clearTimeout(timer); reject(new Error('Server exited with ' + code)); } });
   });
-  const login = await request('/api/login', 'POST', { password: 'test-team-password-123' }, false);
+  const login = await request('/api/setup', 'POST', { bootstrapPassword: 'test-team-password-123', email: 'owner@example.test', name: 'Test owner', password: 'individual-password-123' }, false);
   assert.equal(login.status, 200);
   cookie = login.response.headers.get('set-cookie').split(';')[0]; csrf = login.parsed.csrf;
   data = (await request('/api/bootstrap')).parsed;
@@ -70,9 +75,14 @@ test('full workflow persists, updates reporting and prevents duplicate deliverie
   assert.equal((await request(root + '/enquiries/' + e.id + '/approve', 'POST', { revision: 1, manualMinutes: 8, reviewConfirmed: true })).status, 200);
   await request(root + '/enquiries/' + e.id + '/send', 'POST', { revision: 1 });
   await request(root + '/enquiries/' + e.id + '/send', 'POST', { revision: 1 });
+  for (let i = 0; i < 30; i++) {
+    const snapshot = (await request('/api/bootstrap?customer=' + data.tenant.id)).parsed;
+    if (snapshot.tenant.enquiries.find((v) => v.id === e.id)?.status === 'sent') break;
+    await new Promise((done) => setTimeout(done, 100));
+  }
   const afterData = (await request('/api/bootstrap?customer=' + data.tenant.id)).parsed;
   assert.equal(afterData.metrics.approved, data.metrics.approved + 1);
-  assert.equal(afterData.events.filter((v) => v.type === 'quote.send' && v.subject === e.reference).length, 1);
+  assert.equal(afterData.events.filter((v) => v.type === 'delivery.simulated' && v.subject === e.reference).length, 1);
   const other = data.customers.find((c) => c.id !== data.tenant.id);
   assert.equal((await request('/api/customers/' + other.id + '/enquiries/' + e.id + '/draft', 'POST', {})).status, 404);
   await request(root + '/enquiries/' + e.id + '/won', 'POST', {});
@@ -102,16 +112,82 @@ test('custom channel mappings can normalize sample payloads into enquiries', asy
   const root = '/api/customers/' + data.tenant.id;
   const configured = (await request(root + '/connectors', 'POST', {
     name: 'Custom trade portal', kind: 'channel', enabled: true,
-    capabilities: ['receive_message', 'send_message'], mapping: { buyer: 'contact.company', message: 'rfq.body' }
+    capabilities: ['receive_message', 'send_message'], mapping: { buyer: 'contact.company', message: 'rfq.body', sourceMessageId: 'rfq.id' }
   })).parsed;
-  const payload = { contact: { company: 'Custom payload buyer' }, rfq: { body: '20 × ESAB-E6013' } };
+  const payload = { contact: { company: 'Custom payload buyer' }, rfq: { id: 'test-rfq-123', body: '20 × ESAB-E6013' } };
   const normalized = await request(root + '/connectors/' + configured.id + '/test', 'POST', { payload });
   assert.equal(normalized.parsed.mode, 'simulation');
   assert.equal(normalized.parsed.mapped.buyer, 'Custom payload buyer');
   const result = await request(root + '/connectors/' + configured.id + '/ingest', 'POST', { payload });
   assert.equal(result.parsed.channel, 'Custom trade portal');
   assert.equal(result.parsed.items[0].quantity, 20);
+  const duplicate = await request(root + '/connectors/' + configured.id + '/ingest', 'POST', { payload });
+  assert.equal(duplicate.parsed.id, result.parsed.id);
   assert.equal((await request(root + '/connectors', 'POST', {
     name: 'Unsafe mapping', kind: 'channel', capabilities: [], mapping: { buyer: '__proto__.secret' }
   })).status, 400);
+});
+
+async function account(name, role, customerId) {
+  const email = name + '@example.test', password = 'test-individual-password-123';
+  const created = await request('/api/users', 'POST', { email, name, password, admin: false, active: true,
+    memberships: [{ customerId, role }] });
+  assert.equal(created.status, 200);
+  const login = await request('/api/login', 'POST', { email, password }, false);
+  assert.equal(login.status, 200);
+  return { user: created.parsed, headers: { Cookie: login.response.headers.get('set-cookie').split(';')[0], 'X-CSRF-Token': login.parsed.csrf } };
+}
+test('operator and viewer APIs cannot cross workspace boundaries or bypass role permissions', async () => {
+  const own = data.tenant.id, other = data.customers.find((c) => c.id !== own).id;
+  const op = await account('operator', 'operator', own);
+  assert.equal((await request('/api/bootstrap?customer=' + other, 'GET', undefined, true, op.headers)).status, 403);
+  assert.equal((await request('/api/report.csv?customer=' + other, 'GET', undefined, true, op.headers)).status, 403);
+  assert.equal((await request('/api/customers/' + other + '/enquiries', 'POST', { buyer: 'Unauthorized', channel: 'Email', message: '10 × SKF-6205-2RS' }, true, op.headers)).status, 403);
+  assert.equal((await request('/api/customers/' + own + '/config', 'POST', { maxDiscount: 50 }, true, op.headers)).status, 403);
+  assert.equal((await request('/api/users', 'POST', {}, true, op.headers)).status, 403);
+  const created = (await request('/api/customers/' + own + '/enquiries', 'POST', { buyer: 'Permission check', channel: 'Email', message: '10 × SKF-6205-2RS' })).parsed;
+  await request('/api/customers/' + own + '/enquiries/' + created.id + '/draft', 'POST', {});
+  const current = (await request('/api/bootstrap?customer=' + own)).parsed.tenant.enquiries.find((e) => e.id === created.id);
+  assert.equal((await request('/api/customers/' + own + '/enquiries/' + created.id + '/approve', 'POST',
+    { version: current.version, revision: current.quote.revision, manualMinutes: 3, reviewConfirmed: true }, true, op.headers)).status, 403);
+  const view = await account('viewer', 'viewer', own);
+  const payload = (await request('/api/bootstrap?customer=' + own, 'GET', undefined, true, view.headers)).parsed;
+  assert.equal(payload.customers.length, 1); assert.equal(payload.tenant.enquiries.length, 0);
+  assert.equal(payload.tenant.products.length, 0); assert.equal(payload.users.length, 0); assert.equal(payload.jobs.length, 0);
+  assert.equal(payload.metrics.economics, undefined);
+  assert.equal((await request('/api/customers/' + own + '/enquiries', 'POST', {}, true, view.headers)).status, 403);
+  assert.equal((await request('/api/customers/' + own + '/export', 'GET', undefined, true, view.headers)).status, 403);
+});
+test('stale edits conflict and the original intake identity survives outbound channel changes', async () => {
+  const root = '/api/customers/' + data.tenant.id;
+  const payload = { buyer: 'Source identity test', channel: 'Email', sourceMessageId: 'immutable-source-id', message: '10 × SKF-6205-2RS' };
+  const e = (await request(root + '/enquiries', 'POST', payload)).parsed;
+  const moved = await request(root + '/enquiries/' + e.id + '/outbound', 'POST', { version: e.version, channel: 'WhatsApp', recipient: '+919999999999' });
+  assert.equal(moved.status, 200);
+  assert.equal(moved.parsed.originalChannel, 'Email'); assert.equal(moved.parsed.outboundChannel, 'WhatsApp');
+  assert.equal((await request(root + '/enquiries', 'POST', payload)).parsed.id, e.id);
+  assert.equal((await request(root + '/enquiries/' + e.id + '/draft', 'POST', { version: e.version })).status, 409);
+});
+test('user revocation invalidates existing sessions and shared-password sign-in cannot bypass identity setup', async () => {
+  const op = await account('revoked', 'operator', data.tenant.id);
+  const disabled = await request('/api/users', 'POST', { ...op.user, active: false });
+  assert.equal(disabled.status, 200);
+  assert.equal((await request('/api/bootstrap', 'GET', undefined, true, op.headers)).status, 401);
+  assert.equal((await request('/api/login', 'POST', { password: 'test-team-password-123' }, false)).status, 400);
+  assert.equal((await request('/api/setup', 'POST', { bootstrapPassword: 'test-team-password-123', email: 'attacker@example.test', name: 'Attacker', password: 'another-password-123' }, false)).status, 401);
+});
+
+test('catalogue preview is non-destructive and rollback retains a way to restore the displaced catalogue', async () => {
+  const root = '/api/customers/' + data.tenant.id;
+  const product = { sku: 'ROLLBACK-TEST', name: 'Fictional rollback product', category: 'Tools', price: 25.5, stock: 10 };
+  const before = (await request('/api/bootstrap?customer=' + data.tenant.id)).parsed.tenant;
+  assert.equal((await request(root + '/products', 'POST', { products: [product], preview: true })).status, 200);
+  assert.equal((await request('/api/bootstrap?customer=' + data.tenant.id)).parsed.tenant.products.length, before.products.length);
+  await request(root + '/products', 'POST', { products: [product] });
+  const after = (await request('/api/bootstrap?customer=' + data.tenant.id)).parsed.tenant;
+  const snapshot = after.catalogueHistory.at(-1);
+  assert.equal((await request(root + '/catalogue-restore', 'POST', { snapshotId: snapshot.id })).status, 200);
+  const restored = (await request('/api/bootstrap?customer=' + data.tenant.id)).parsed.tenant;
+  assert.deepEqual(restored.products, before.products);
+  assert.ok(restored.catalogueHistory.at(-1).products.some((p) => p.sku === product.sku));
 });

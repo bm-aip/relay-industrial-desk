@@ -1,4 +1,5 @@
 import { id, quoteTotals, routeEnquiry, TEAM, CONNECTOR_PRESETS } from './domain.mjs';
+import { normaliseTenant } from './workflow.mjs';
 
 export const SAMPLE_PRODUCTS = [
   ['SKF-6205-2RS', 'SKF sealed deep-groove bearing', 'Bearings', 'piece', 420, 480, ['6205-2RS']],
@@ -15,12 +16,12 @@ export const SAMPLE_PRODUCTS = [
   ['ESAB-E6013', 'ESAB E6013 welding electrodes · 5 kg', 'Welding', 'pack', 1150, 95, ['E6013']]
 ];
 export function createTenant(name, options = {}) {
-  return {
+  return normaliseTenant({
     id: id('customer'), name, city: options.city || 'Chennai', mode: 'prototype',
     config: { version: 1, defaultOwner: TEAM[0], baselineMinutes: 24, baselineApprovalMinutes: 90,
       hourlyCost: 400, maxDiscount: 10, taxRate: 18, followupDays: 2, currency: 'INR', timezone: 'Asia/Kolkata' },
     products: [], rules: [], connectors: [], enquiries: [], nextReference: 1001, createdAt: new Date().toISOString()
-  };
+  });
 }
 function ago(days, minutes = 0) { return new Date(Date.now() - days * 86400000 - minutes * 60000).toISOString(); }
 function item(p, quantity) {
@@ -46,11 +47,11 @@ export function seedTenants() {
     });
     tenant.rules = [
       { id: id('rule'), name: 'Incomplete requests to technical review', priority: 1, enabled: true,
-        field: 'match', operator: 'eq', value: 'incomplete', queue: 'Technical review', owner: TEAM[2] },
+        field: 'match', operator: 'eq', value: 'incomplete', queue: 'Technical review', owner: TEAM[0] },
       { id: id('rule'), name: 'High-value quotations to sales lead', priority: 2, enabled: true,
         field: 'value', operator: 'gte', value: '75000', queue: 'Sales lead', owner: TEAM[0] },
       { id: id('rule'), name: 'Automation products to specialist', priority: 3, enabled: true,
-        field: 'category', operator: 'eq', value: 'Automation', queue: 'Automation desk', owner: TEAM[1] }
+        field: 'category', operator: 'eq', value: 'Automation', queue: 'Automation desk', owner: TEAM[0] }
     ];
     const buyers = ['Aster Manufacturing', 'Nexus Fabrication', 'Lakshmi Engineering', 'Coastal Process Systems',
       'Vantage Components', 'Orbit Packaging', 'Southern Maintenance', 'Prakash Industries'];

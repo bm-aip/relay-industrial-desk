@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { normaliseTenant, freshItems, assertCommercial, archiveQuote, addEffort, lineTotals } from './workflow.mjs';
 
 export const id = (prefix) => prefix + '_' + randomUUID().replaceAll('-', '').slice(0, 12);
 export const round = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
-export const TEAM = ['Priya Nair', 'Arjun Mehta', 'Karthik Rao'];
+export const TEAM = ['Unassigned'];
 export const CAPABILITIES = ['receive_message', 'send_message', 'read_products', 'read_prices', 'read_stock', 'read_customers', 'write_quote', 'write_task'];
 export const CONNECTOR_PRESETS = [
   { name: 'WhatsApp', kind: 'channel', capabilities: ['receive_message', 'send_message'], color: '#277e56', initials: 'WA' },
@@ -41,6 +42,14 @@ export function validateProduct(p) {
     unit: requiredText(p.unit || 'unit', 'Unit', 40),
     price: numberIn(p.price, 'Unit price', 0, 1e8),
     stock: numberIn(p.stock, 'Stock', 0, 1e8),
+    packSize: numberIn(p.packSize ?? 1, 'Pack size', .001, 1e6),
+    minimumQuantity: numberIn(p.minimumQuantity ?? .01, 'Minimum quantity', .001, 1e6),
+    leadTime: typeof p.leadTime === 'string' ? p.leadTime.trim().slice(0, 200) : '',
+    taxRate: p.taxRate === '' || p.taxRate == null ? null : numberIn(p.taxRate, 'Product tax rate', 0, 50),
+    customerPrices: Array.isArray(p.customerPrices) ? p.customerPrices.slice(0, 200).map((r) => ({
+      buyerId: requiredText(r.buyerId, 'Buyer ID', 100), minQuantity: numberIn(r.minQuantity ?? 0, 'Price break quantity', 0, 1e6),
+      price: numberIn(r.price, 'Contract unit price', 0, 1e8)
+    })) : [],
     aliases: Array.isArray(p.aliases) ? p.aliases.map((v) => requiredText(v, 'Alias', 120)).slice(0, 10) : [],
     source: requiredText(p.source || 'Imported catalogue', 'Source', 100), updatedAt: new Date().toISOString()
   };
@@ -59,12 +68,11 @@ export function validateRule(r) {
 }
 function escapedRegex(text) { return text.replace(/[.*+?^\x24{}()|[\]\\]/g, '\\$&'); }
 function locateTerm(text, term) {
-  return new RegExp('(^|[^a-z0-9])(' + escapedRegex(term) + ')(?=$|[^a-z0-9])', 'i').exec(text);
+  return new RegExp('(^|[^a-z0-9_./-])(' + escapedRegex(term) + ')(?=$|[^a-z0-9_./-]|[.,]$)', 'i').exec(text);
 }
 export function extractItems(message, products) {
-  // Deterministic matching for this prototype; no external LLM is called.
-  // Exact identifiers/unique aliases are accepted; incomplete requests go to review.
-  const chunks = message.split(/[;\n]+/).map((s) => s.trim()).filter(Boolean);
+  // Deliberately conservative: unaccounted request text is never silently discarded.
+  const chunks = message.split(/[;\n]+|\s+(?:and|&)\s+|,\s+(?=[+-]?\d)/i).map((s) => s.trim()).filter(Boolean);
   const items = [];
   const missing = [];
   for (const chunk of chunks) {
@@ -74,7 +82,7 @@ export function extractItems(message, products) {
       return exact || alias ? { p, hit: exact || alias, kind: exact ? 'Exact SKU' : 'Catalogue alias' } : null;
     }).filter(Boolean);
     if (!matches.length) {
-      if (/\d|motor|pump|bearing|drive|valve|quote|suitable|equivalent|glove|cable|filter|tool|bolt/i.test(chunk)) missing.push(chunk);
+      if (!/^(?:hi|hello|dear team|thanks|thank you|regards)[.! ]*$/i.test(chunk)) missing.push('Unresolved request: ' + chunk);
       continue;
     }
     for (const match of matches) {
@@ -83,10 +91,15 @@ export function extractItems(message, products) {
       const start = match.hit.index + match.hit[1].length;
       const before = chunk.slice(0, start);
       const after = chunk.slice(start + match.hit[2].length);
-      const beforeQuantity = before.match(/(?:^|[^a-z0-9])(\d+(?:\.\d+)?)\s*(?:x|×|pcs?|pieces?|units?|nos?\.?|sets?)?\s*$/i);
-      const afterQuantity = after.match(/^\s*(?:[,:-]\s*)?(?:qty\s*[:=]?\s*|x\s*|×\s*)(\d+(?:\.\d+)?)/i);
+      const beforeQuantity = before.match(/(?:^|[^a-z0-9.+-])([+-]?\d+(?:\.\d+)?)\s*(?:x|×|pcs?|pieces?|units?|nos?\.?|sets?)?\s*$/i);
+      const afterQuantity = after.match(/^\s*(?:[,:]\s*)?(?:qty\s*[:=]?\s*|x\s*|×\s*)([+-]?\d+(?:\.\d+)?)/i);
       const quantity = Number((beforeQuantity || afterQuantity)?.[1]);
       if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 1e6) { missing.push('Quantity needed for ' + match.p.sku); continue; }
+      if (matches.length > 1) { missing.push('Use one requested product per line or confirm each line: ' + chunk); continue; }
+      const residualBefore = beforeQuantity ? before.slice(0, beforeQuantity.index) : before;
+      const residualAfter = afterQuantity ? after.slice(afterQuantity[0].length) : after;
+      const residual = (residualBefore + ' ' + residualAfter).replace(/\b(?:please|quote|quotation|for|need|supply|pcs|pieces|units|nos)\b/gi, '').replace(/[.,:!?()\s]/g, '');
+      if (residual) missing.push('Confirm remaining specifications or terms: ' + chunk);
       const existing = items.find((i) => i.sku === match.p.sku);
       if (existing) existing.quantity += quantity;
       else items.push({
@@ -130,40 +143,68 @@ export function makeEnquiry(input, tenant) {
   const extracted = extractItems(message, tenant.products);
   const enquiry = {
     id: id('enquiry'), reference: 'RFQ-' + String(tenant.nextReference++).padStart(4, '0'),
-    buyer: requiredText(input.buyer, 'Buyer'), channel, message,
+    buyer: requiredText(input.buyer, 'Buyer'), buyerId: String(input.buyerId || '').slice(0, 100),
+    recipient: String(input.recipient || '').slice(0, 200), channel, originalChannel: channel, outboundChannel: channel,
+    sourceConnectorId: input.sourceConnectorId || tenant.connectors.find((c) => c.name === channel)?.id,
+    sourceMessageId: input.sourceMessageId || null, message,
     items: extracted.items, missing: extracted.missing, status: 'new',
     createdAt: new Date().toISOString(), approvedAt: null, manualMinutes: null,
     baselineMinutes: tenant.config.baselineMinutes, corrected: false,
-    quote: null, followup: null, orderValue: 0, archived: false
+    quote: null, quoteHistory: [], approvals: [], effort: [], messages: [], version: 1,
+    initiallyMatched: !extracted.missing.length, followup: null, followupHistory: [],
+    orderValue: 0, archived: false, simulated: tenant.mode !== 'live'
   };
   enquiry.route = routeEnquiry(enquiry, tenant.rules, tenant.config);
   if (enquiry.missing.length) enquiry.status = 'needs_review';
   return enquiry;
 }
 export function draftQuote(enquiry, tenant, input = {}) {
-  if (['sent', 'won'].includes(enquiry.status)) throw new DomainError('Sent quotes are locked in this prototype.', 409);
+  normaliseTenant(tenant);
+  if (['won', 'lost'].includes(enquiry.status)) throw new DomainError('Closed enquiries cannot be revised.', 409);
   if (enquiry.missing.length || !enquiry.items.length) throw new DomainError('Resolve the product and quantity questions before drafting.');
+  archiveQuote(enquiry);
+  if (enquiry.followup) {
+    enquiry.followupHistory.push(structuredClone(enquiry.followup));
+    enquiry.followup.status = 'cancelled'; enquiry.followup.reason = 'Quote revised';
+  }
+  enquiry.items = freshItems(enquiry, tenant);
   const discount = numberIn(input.discount ?? 0, 'Discount', 0, tenant.config.maxDiscount);
   enquiry.quote = {
     id: enquiry.quote?.id || id('quote'), revision: (enquiry.quote?.revision || 0) + 1,
-    discount, taxRate: tenant.config.taxRate, ...quoteTotals(enquiry.items, discount, tenant.config.taxRate),
-    draftedAt: new Date().toISOString(), approvedRevision: null
+    discount, taxRate: tenant.config.taxRate, ...lineTotals(enquiry.items, discount, tenant.config.taxRate, tenant.config.freight),
+    items: structuredClone(enquiry.items), seller: tenant.name, buyer: enquiry.buyer, buyerId: enquiry.buyerId,
+    recipient: enquiry.recipient, outboundChannel: enquiry.outboundChannel,
+    terms: Object.fromEntries(['paymentTerms', 'deliveryTerms', 'validityDays', 'freight'].map((k) => [k, tenant.config[k]])),
+    backorderConfirmed: input.backorderConfirmed === true,
+    validUntil: new Date(Date.now() + tenant.config.validityDays * 86400000).toISOString(),
+    draftedAt: new Date().toISOString(), approvedRevision: null,
+    revisionReason: requiredText(input.reason || 'Initial quotation / catalogue refresh', 'Revision reason', 300)
   };
-  enquiry.approvedAt = null; enquiry.manualMinutes = null; enquiry.status = 'awaiting_approval';
+  enquiry.approvedAt = null; enquiry.status = 'awaiting_approval';
   enquiry.route = routeEnquiry(enquiry, tenant.rules, tenant.config);
 }
-export function approveQuote(enquiry, input) {
+export function approveQuote(enquiry, input, tenant) {
   if (enquiry.status === 'approved') return false;
   if (enquiry.status !== 'awaiting_approval' || !enquiry.quote || enquiry.missing.length) throw new DomainError('Only complete quotation drafts can be approved.', 409);
-  enquiry.manualMinutes = numberIn(input.manualMinutes, 'Total human effort in minutes', 0, 1440);
+  if (!tenant) throw new DomainError('Commercial source validation is required.');
+  assertCommercial(enquiry, tenant, true);
+  const minutes = numberIn(input.manualMinutes, 'Additional human effort in minutes', 0, 1440);
+  if (minutes) addEffort(enquiry, { minutes, note: 'Commercial review / corrections for revision ' + enquiry.quote.revision }, input.actor);
+  enquiry.manualMinutes ??= 0;
   enquiry.corrected = input.corrected === true; enquiry.approvedAt = new Date().toISOString();
+  enquiry.firstApprovedAt ||= enquiry.approvedAt;
   enquiry.quote.approvedRevision = enquiry.quote.revision; enquiry.status = 'approved';
+  enquiry.quote.approvedAt = enquiry.approvedAt; enquiry.quote.approvedBy = input.actor || 'Unknown';
+  enquiry.approvals.push({ id: id('approval'), at: enquiry.approvedAt, actor: input.actor || 'Unknown',
+    revision: enquiry.quote.revision, corrected: enquiry.corrected, snapshot: structuredClone(enquiry.quote) });
+  archiveQuote(enquiry);
   return true;
 }
 export function sendQuote(enquiry, tenant) {
   if (['sent', 'won'].includes(enquiry.status)) return false;
   if (enquiry.status !== 'approved' || enquiry.quote?.approvedRevision !== enquiry.quote?.revision) throw new DomainError('This quote needs approval before simulated delivery.', 409);
-  const connector = tenant.connectors.find((c) => c.enabled && c.kind === 'channel' && c.name === enquiry.channel);
+  assertCommercial(enquiry, tenant);
+  const connector = tenant.connectors.find((c) => c.enabled && c.kind === 'channel' && c.name === enquiry.outboundChannel);
   if (!connector?.capabilities.includes('send_message')) throw new DomainError('This channel cannot send messages. Select an enabled outbound channel first.');
   enquiry.status = 'sent'; enquiry.sentAt = new Date().toISOString();
   enquiry.followup = {
@@ -178,11 +219,16 @@ export function median(values) {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 export function reporting(tenant, days = 30, end = new Date()) {
+  normaliseTenant(tenant);
   const cutoff = new Date(end.getTime() - days * 86400000);
   const inPeriod = (stamp) => stamp && new Date(stamp) >= cutoff && new Date(stamp) <= end;
   const received = tenant.enquiries.filter((e) => inPeriod(e.createdAt));
   // Approved cohort is the denominator for effort and quality.
-  const completed = tenant.enquiries.filter((e) => inPeriod(e.approvedAt) && Number.isFinite(e.manualMinutes));
+  const completed = tenant.enquiries.map((e) => {
+    const first = e.approvals[0];
+    return first ? { ...e, approvedAt: first.at, corrected: e.approvals.some((a) => a.corrected && new Date(a.at) <= end),
+      manualMinutes: e.effort.filter((x) => new Date(x.at) <= end).reduce((s, x) => s + x.minutes, 0) } : null;
+  }).filter((e) => e && inPeriod(e.approvedAt));
   const baselineMinutes = completed.reduce((s, e) => s + e.baselineMinutes, 0);
   const humanMinutes = completed.reduce((s, e) => s + e.manualMinutes, 0);
   const savedHours = round((baselineMinutes - humanMinutes) / 60);
@@ -200,7 +246,7 @@ export function reporting(tenant, days = 30, end = new Date()) {
   }
   const categories = [...new Set(tenant.products.map((p) => p.category))].map((category) => {
     const rows = received.filter((e) => e.items.some((p) => p.category === category));
-    return { category, enquiries: rows.length, approvals: rows.filter((e) => e.approvedAt).length,
+    return { category, enquiries: rows.length, approvals: rows.filter((e) => e.approvals.some((a) => new Date(a.at) <= end)).length,
       products: tenant.products.filter((p) => p.category === category).length };
   }).toSorted((a, b) => b.enquiries - a.enquiries);
   return {
@@ -211,10 +257,25 @@ export function reporting(tenant, days = 30, end = new Date()) {
     onTimeRate: due.length ? round(onTime.length / due.length * 100) : null,
     followupsDue: due.length, followupsOnTime: onTime.length,
     correctionRate: completed.length ? round(completed.filter((e) => e.corrected).length / completed.length * 100) : null,
-    matchedRate: received.length ? round(received.filter((e) => !e.missing.length).length / received.length * 100) : null,
+    matchedRate: received.some((e) => typeof e.initiallyMatched === 'boolean') ? round(received.filter((e) => e.initiallyMatched === true).length / received.filter((e) => typeof e.initiallyMatched === 'boolean').length * 100) : null,
+    matchingSampleSize: received.filter((e) => typeof e.initiallyMatched === 'boolean').length,
+    p90ApprovalMinutes: completed.length ? completed.map((e) => Math.max(0, (new Date(e.approvedAt) - new Date(e.createdAt)) / 60000)).toSorted((a, b) => a - b)[Math.ceil(completed.length * .9) - 1] : null,
+    sampleSize: completed.length,
+    measuredBaseline: tenant.config.baselineSampleSize > 0 && !!tenant.config.baselineFrom && !!tenant.config.baselineTo,
+    periodEffortMinutes: round(tenant.enquiries.flatMap((e) => e.effort).filter((x) => inPeriod(x.at)).reduce((s, x) => s + x.minutes, 0)),
+    funnel: {
+      received: received.length,
+      drafted: received.filter((e) => e.quote || e.quoteHistory.length).length,
+      approved: received.filter((e) => e.approvals.length).length,
+      simulatedDispatches: received.filter((e) => e.sentAt && e.simulated).length,
+      actualDispatches: received.filter((e) => e.sentAt && !e.simulated).length,
+      linkedOrders: received.filter((e) => e.status === 'won').length
+    },
+    economics: { setupHours: round(tenant.config.setupMinutes / 60), supportHours: round(tenant.config.supportMinutes / 60),
+      monthlyFee: tenant.config.monthlyFee, operatingCost: tenant.config.operatingCost },
     pendingApprovals: tenant.enquiries.filter((e) => e.status === 'awaiting_approval').length,
     needsReview: tenant.enquiries.filter((e) => e.status === 'needs_review').length,
-    overdue: tenant.enquiries.filter((e) => e.status !== 'won' && e.followup && !e.followup.sentAt && new Date(e.followup.dueAt) < end).length,
+    overdue: tenant.enquiries.filter((e) => !['won', 'lost'].includes(e.status) && e.followup && e.followup.status !== 'cancelled' && !e.followup.sentAt && new Date(e.followup.dueAt) < end).length,
     linkedOrderValue: tenant.enquiries.filter((e) => e.status === 'won' && inPeriod(e.wonAt)).reduce((s, e) => s + e.orderValue, 0),
     daily, categories
   };
